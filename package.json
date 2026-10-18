@@ -1,0 +1,21 @@
+{
+  "name": "trustlance-poc",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build:contracts": "node scripts/compile.js",
+    "test:contracts": "npm run build:contracts && npx hardhat test --no-compile",
+    "demo": "npm run build:contracts && npx hardhat run scripts/demo.js --no-compile",
+    "test:risk": "cd risk-engine && python -m unittest -v",
+    "benchmark": "python risk-engine/benchmark.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.29.1",
+    "solc": "^0.8.24"
+  }
+}
