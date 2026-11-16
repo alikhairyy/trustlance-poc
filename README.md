@@ -4,9 +4,10 @@ Freelance platform where each milestone payment is locked in a smart-contract
 escrow, an explainable AI risk score can hold a payment for human review, and a
 human arbiter makes the final decision. Graduation project, ESLSCA University.
 
-**Milestone 2 (SRS + 25% implementation).** The requirements are in
-[`docs/SRS.md`](docs/SRS.md), with every requirement traced to the code that
-implements it. Of the 20 functional requirements, 13 are done, 2 are partial
+**Milestone 2 (SRS + 25% implementation).** The full SRS is
+[`docs/Trustlance_SRS_Milestone2.pdf`](docs/Trustlance_SRS_Milestone2.pdf), with a
+Markdown copy in [`docs/SRS.md`](docs/SRS.md). Step-by-step run instructions and a
+demo script are in [`docs/HOW_TO_RUN.md`](docs/HOW_TO_RUN.md). Of the 20 functional requirements, 13 are done, 2 are partial
 with a named development stand-in, 2 are stubs and 3 are planned.
 
 ## What's implemented
