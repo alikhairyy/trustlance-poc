@@ -1,0 +1,166 @@
+// API tests: the web backend driving a real MilestoneEscrow on Hardhat's in-process chain.
+// The Python risk engine is replaced by a stand-in with fixed answers, so these tests
+// check the backend logic (roles, state, on-chain hold) without training the model.
+// The real engine is covered by risk-engine/test_engine.py and the end-to-end demo.
+const { expect } = require("chai");
+const { ethers } = require("hardhat");
+const { openDatabase } = require("../../server/db");
+const { createApp } = require("../../server/app");
+const { makeChain } = require("../../server/services/chain");
+const { seedDemo } = require("../../server/seed");
+
+const fakeRisk = {
+  async assessPayout({ freelancer }) {
+    if (freelancer.dev_risk_profile === "fraud") {
+      return { score: 0.9, band: "high", action: "hold_for_review", reason: "Test: high risk wallet.", modelVersion: "test", auditHash: null };
+    }
+    return { score: 0.1, band: "low", action: "auto_approve", reason: "Test: low risk wallet.", modelVersion: "test", auditHash: null };
+  },
+};
+
+describe("Trustlance API", function () {
+  this.timeout(60000);
+  let server, base;
+
+  async function call(method, path, body, token) {
+    const res = await fetch(base + path, {
+      method,
+      headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { status: res.status, body: await res.json() };
+  }
+  const login = async (email) => (await call("POST", "/api/auth/login", { email, password: "demo1234" })).body.token;
+
+  // Creates a job, proposal from `freelancerEmail`, accepts it and adds one funded milestone.
+  async function fundedMilestone(t, freelancerEmail, amount = "0.5") {
+    const job = (await call("POST", "/api/jobs", { title: "Job", description: "d", budget_eth: "1" }, t.client)).body;
+    const fl = await login(freelancerEmail);
+    const p = (await call("POST", `/api/jobs/${job.id}/proposals`, { cover_letter: "hi", price_eth: "1" }, fl)).body;
+    await call("POST", `/api/proposals/${p.id}/accept`, null, t.client);
+    const m = (await call("POST", `/api/jobs/${job.id}/milestones`, { title: "M1", amount_eth: amount }, t.client)).body;
+    await call("POST", `/api/milestones/${m.id}/fund`, null, t.client);
+    return { job, m, fl };
+  }
+
+  let t;
+  before(async function () {
+    const db = await openDatabase(":memory:");
+    const chain = makeChain(ethers);
+    await seedDemo(db, chain);
+    const app = createApp({ db, chain, risk: fakeRisk, jwtSecret: "test-secret" });
+    server = app.listen(0);
+    base = `http://127.0.0.1:${server.address().port}`;
+    t = { client: await login("client@demo.com"), arbiter: await login("arbiter@demo.com") };
+  });
+  after(() => server.close());
+
+  describe("accounts (FR1, FR2, NFR3)", function () {
+    it("registers a user with a wallet and logs in", async function () {
+      const r = await call("POST", "/api/auth/register", {
+        email: "new@x.com", password: "longpassword", full_name: "New User", role: "freelancer",
+      });
+      expect(r.status).to.equal(201);
+      expect(r.body.user.wallet_address).to.match(/^0x[0-9a-fA-F]{40}$/);
+      expect(r.body.user).to.not.have.property("password_hash");
+      const me = await call("GET", "/api/users/me", null, r.body.token);
+      expect(me.body.email).to.equal("new@x.com");
+    });
+
+    it("rejects a wrong password and a short password", async function () {
+      expect((await call("POST", "/api/auth/login", { email: "client@demo.com", password: "nope" })).status).to.equal(401);
+      const r = await call("POST", "/api/auth/register", { email: "s@x.com", password: "short", full_name: "S", role: "client" });
+      expect(r.status).to.equal(400);
+    });
+
+    it("requires a token", async function () {
+      expect((await call("GET", "/api/jobs")).status).to.equal(401);
+    });
+  });
+
+  describe("jobs and proposals (FR3, FR4, FR5, NFR1)", function () {
+    it("only clients post jobs; freelancers see open jobs and send proposals", async function () {
+      const fl = await login("freelancer@demo.com");
+      expect((await call("POST", "/api/jobs", { title: "x", description: "y", budget_eth: "1" }, fl)).status).to.equal(403);
+      const open = await call("GET", "/api/jobs", null, fl);
+      expect(open.body.length).to.be.greaterThan(0);
+      const p = await call("POST", `/api/jobs/${open.body[0].id}/proposals`, { cover_letter: "I can do it", price_eth: "1.2" }, fl);
+      expect(p.status).to.equal(201);
+      const dup = await call("POST", `/api/jobs/${open.body[0].id}/proposals`, { cover_letter: "again", price_eth: "1" }, fl);
+      expect(dup.status).to.equal(409);
+    });
+
+    it("accepting a proposal assigns the job and deploys an escrow contract", async function () {
+      const { job } = await fundedMilestone(t, "freelancer@demo.com");
+      const j = (await call("GET", `/api/jobs/${job.id}`, null, t.client)).body;
+      expect(j.status).to.equal("in_progress");
+      expect(j.escrow_address).to.match(/^0x/);
+      expect(await ethers.provider.getCode(j.escrow_address)).to.not.equal("0x");
+    });
+  });
+
+  describe("milestone payments (FR6 to FR13)", function () {
+    it("low risk: submit, then client approval releases the funds on-chain", async function () {
+      const { m, fl } = await fundedMilestone(t, "freelancer@demo.com", "0.5");
+      const sub = await call("POST", `/api/milestones/${m.id}/submit`, { deliverable_url: "https://example.com/work" }, fl);
+      expect(sub.body.risk.action).to.equal("auto_approve");
+      expect(sub.body.milestone.risk_flagged).to.equal(0);
+      const ok = await call("POST", `/api/milestones/${m.id}/approve`, null, t.client);
+      expect(ok.status).to.equal(200);
+      expect(ok.body.status).to.equal("released");
+      const detail = (await call("GET", `/api/milestones/${m.id}`, null, t.client)).body;
+      expect(detail.history.map((h) => h.event)).to.include.members(["funded", "submitted", "risk_scored", "approved_released"]);
+    });
+
+    it("high risk: flag goes on-chain, approval is blocked, freelancer appeals, arbiter releases", async function () {
+      const { m, fl } = await fundedMilestone(t, "risky@demo.com", "0.3");
+      const sub = await call("POST", `/api/milestones/${m.id}/submit`, { deliverable_url: "https://example.com/w" }, fl);
+      expect(sub.body.risk.action).to.equal("hold_for_review");
+      expect(sub.body.milestone.risk_flagged).to.equal(1);
+      expect(sub.body.milestone.review_deadline).to.be.a("string");
+
+      const blocked = await call("POST", `/api/milestones/${m.id}/approve`, null, t.client);
+      expect(blocked.status).to.equal(409);
+      expect(blocked.body.contract_error).to.equal("ReleaseHeldForReview");
+
+      expect((await call("POST", `/api/milestones/${m.id}/appeal`, { note: "New wallet, please check" }, fl)).body.appealed).to.equal(1);
+      const queue = (await call("GET", "/api/arbiter/queue", null, t.arbiter)).body;
+      const item = queue.find((q) => q.id === m.id);
+      expect(item.appeal_note).to.equal("New wallet, please check");
+      expect(item.risk_reason).to.equal("Test: high risk wallet.");
+
+      const rel = await call("POST", `/api/arbiter/milestones/${m.id}/release`, { note: "False positive" }, t.arbiter);
+      expect(rel.body.status).to.equal("released");
+    });
+
+    it("dispute: client disputes and the arbiter refunds", async function () {
+      const { m, fl } = await fundedMilestone(t, "freelancer@demo.com", "0.2");
+      await call("POST", `/api/milestones/${m.id}/submit`, { deliverable_url: "https://example.com/w" }, fl);
+      expect((await call("POST", `/api/milestones/${m.id}/dispute`, { reason: "Not delivered" }, t.client)).body.status).to.equal("disputed");
+      expect((await call("POST", `/api/arbiter/milestones/${m.id}/refund`, null, t.arbiter)).body.status).to.equal("refunded");
+    });
+
+    it("only the job's own parties can act on a milestone", async function () {
+      const { m } = await fundedMilestone(t, "freelancer@demo.com", "0.1");
+      const other = await login("risky@demo.com");
+      expect((await call("POST", `/api/milestones/${m.id}/submit`, { deliverable_url: "x" }, other)).status).to.equal(403);
+      expect((await call("POST", `/api/milestones/${m.id}/approve`, null, t.arbiter)).status).to.equal(403);
+      expect((await call("POST", `/api/arbiter/milestones/${m.id}/release`, null, t.client)).status).to.equal(403);
+    });
+
+    it("arbiter pause blocks new activity (FR14)", async function () {
+      const { job, m } = await fundedMilestone(t, "freelancer@demo.com", "0.1");
+      expect((await call("POST", `/api/arbiter/jobs/${job.id}/pause`, null, t.arbiter)).body.paused).to.equal(true);
+      const blocked = await call("POST", `/api/jobs/${job.id}/milestones`, { title: "M2", amount_eth: "0.1" }, t.client);
+      expect(blocked.status).to.equal(423);
+      expect((await call("POST", `/api/arbiter/jobs/${job.id}/unpause`, null, t.arbiter)).body.paused).to.equal(false);
+      expect(m.status).to.equal("pending");
+    });
+  });
+
+  describe("stubs", function () {
+    it("ratings return 501 until FR17 is built", async function () {
+      expect((await call("POST", "/api/jobs/1/reviews", { rating: 5 }, t.client)).status).to.equal(501);
+    });
+  });
+});

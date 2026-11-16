@@ -1,0 +1,27 @@
+\chapter{Constraints and Assumptions}
+\label{ch:constraints}
+
+\section{Constraints}
+\begin{itemize}
+\item A smart contract cannot run a machine-learning model. The model therefore runs off-chain, and only its flag and reason reach the contract, through a single authorised oracle address.
+\item Development uses a local test chain and test ETH. No real money is involved.
+\item Text stored on-chain (flag reasons and appeal notes) is limited to 512 bytes to keep gas costs down.
+\item Only open-source tools are used, so the prototype costs nothing to run.
+\item The project has one academic year and five team members.
+\end{itemize}
+
+\section{Assumptions}
+\begin{itemize}
+\item The training data, the Kaggle Ethereum Fraud Detection Dataset~\cite{kaggle} (8,731 wallets after removing duplicates), describes wallets and not freelancers. We use the risk of the payout wallet as a proxy until the survey and pilot give us freelancer-history data.
+\item The thresholds 0.35 and 0.65 are starting values. They will be tuned on pilot data.
+\item Each user has one payout wallet, and payments are made in ETH.
+\item The arbiter acts honestly. The contract limits what the arbiter can do (release or refund) but not which of the two they choose.
+\item Users have internet access and a modern web browser.
+\end{itemize}
+
+\section{Known limitations}
+\begin{itemize}
+\item The contract has not been audited by an outside party.
+\item A single oracle address is a point of trust until several signers are required.
+\item Recall of the risk model is 0.61, so some fraudulent wallets will score low. The arbiter and the dispute path are the safeguards.
+\end{itemize}

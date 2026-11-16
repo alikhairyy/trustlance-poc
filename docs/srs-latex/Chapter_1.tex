@@ -1,0 +1,30 @@
+\chapter{Introduction}
+\label{ch:intro}
+
+\section{Purpose of this document}
+This SRS describes what Trustlance must do and the conditions it must meet. It is the reference for the rest of the project: each requirement has an identifier, a status, and the file in the code that implements it (Appendix~\ref{sec:trace}). The project proposal (Milestone~1) explained why the system is worth building and showed that its core idea works. This document turns that idea into requirements, models them in four diagrams, and reports how much of the system now exists.
+
+The readers are the project supervisor and examiners, and the five team members who build the system.
+
+\section{Problem statement}
+On most freelance platforms the platform itself holds the client's money and decides disputes. This causes three problems.
+
+\begin{enumerate}
+\item Funds held by a platform depend on trusting that platform, which can freeze or reverse them.
+\item Automated fraud checks, where they exist, do not tell the user why a payment was held, so a wrongly flagged freelancer has nothing to contest.
+\item When an automated system can block a payment, nothing limits how long the block lasts.
+\end{enumerate}
+
+\textbf{Research question.} Can a milestone escrow smart contract, combined with an explainable risk score and a human arbiter, protect freelance payments while keeping every automated decision explainable, appealable and limited in time?
+
+\section{Definitions and abbreviations}
+\begin{itemize}
+\item \textbf{Escrow:} money held by a neutral party until agreed conditions are met. In Trustlance the neutral party is a smart contract~\cite{ethereum}.
+\item \textbf{Milestone:} a part of a job with its own deliverable and its own payment.
+\item \textbf{Arbiter:} a human reviewer on the platform side who resolves disputed and flagged payments.
+\item \textbf{Risk oracle:} the only address allowed to post the AI's flag and reason to the contract.
+\item \textbf{Payout wallet:} the blockchain address that receives the freelancer's payment.
+\item \textbf{Review window:} the seven days during which a flag blocks the client's approval.
+\item \textbf{API, JWT, ETH:} application programming interface; JSON Web Token, used to identify a logged-in user; Ether, the currency of the Ethereum network.
+\item \textbf{FR, NFR:} functional requirement; non-functional requirement.
+\end{itemize}

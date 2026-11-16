@@ -1,0 +1,79 @@
+classDiagram
+  direction LR
+  class MilestoneEscrow {
+    <<smart contract>>
+    +address client
+    +address freelancer
+    +address arbiter
+    +address riskOracle
+    +bool paused
+    +addMilestone(amount)
+    +fundMilestone(id)
+    +submitWork(id)
+    +flagRisk(id, reason)
+    +appealFlag(id, note)
+    +approveMilestone(id)
+    +disputeMilestone(id)
+    +arbiterRelease(id)
+    +arbiterRefund(id)
+    +pause() / unpause()
+  }
+  class Milestone {
+    <<struct>>
+    +uint amount
+    +Status status
+    +bool riskFlagged
+    +string riskReason
+    +uint flaggedAt
+    +bool appealed
+  }
+  class ChainService {
+    +deployEscrow(client, freelancer, arbiter)
+    +addMilestone() fund() submit()
+    +flag() approve() dispute() appeal()
+    +arbiterRelease() arbiterRefund()
+    +readMilestone(address, index)
+  }
+  class RiskService {
+    +assessPayout(freelancer)
+  }
+  class RiskEngine {
+    <<Python>>
+    +assess(model, features) RiskAssessment
+    +band_and_action(score)
+  }
+  class WalletModel {
+    <<Python, logistic regression>>
+    +score(features) float
+    +contributions(features)
+  }
+  class AuditLog {
+    <<Python>>
+    +append_decision(record, inputs)
+    +verify_chain() bool
+  }
+  class MilestoneRoutes {
+    <<Express router>>
+    +POST fund / submit / approve
+    +POST dispute / appeal
+  }
+  class ArbiterRoutes {
+    <<Express router>>
+    +GET queue
+    +POST release / refund / pause
+  }
+  class Database {
+    <<SQLite>>
+    users, jobs, proposals
+    milestones, risk_assessments
+  }
+  MilestoneEscrow "1" *-- "*" Milestone
+  MilestoneRoutes --> ChainService
+  MilestoneRoutes --> RiskService
+  MilestoneRoutes --> Database
+  ArbiterRoutes --> ChainService
+  ArbiterRoutes --> Database
+  ChainService --> MilestoneEscrow : ethers.js
+  RiskService --> RiskEngine : predict_cli.py
+  RiskEngine --> WalletModel
+  RiskEngine ..> AuditLog : logs decision

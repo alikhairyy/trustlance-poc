@@ -1,0 +1,31 @@
+\chapter{Non-functional Requirements}
+\label{ch:nfr}
+
+Each non-functional requirement below comes with the way we check it.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{1.1cm}>{\raggedright\arraybackslash}p{2.2cm}L>{\raggedright\arraybackslash}p{4.3cm}}
+\hline
+\textbf{ID} & \textbf{Category} & \textbf{Requirement} & \textbf{How it is checked} \\ \hline
+NFR1 & Security & Only the right role can call each contract function and API route. & Contract modifiers and JWT role checks; 25 contract tests and the API role tests. \\
+NFR2 & Security & No reentrancy; state changes before any transfer. & Reentrancy guard; a test where a malicious contract tries to re-enter. \\
+NFR3 & Security & Passwords are never stored in plain text. & scrypt with a random salt per user. \\
+NFR4 & Explainability & Every risk score comes with a sentence naming the three facts that moved it most. & Reason stored with each assessment and posted on-chain with each flag. \\
+NFR5 & Liveness & The AI can delay a payment by at most 7 days and never moves funds. & A test moves the chain clock forward 7 days and the client's approval goes through. \\
+NFR6 & Privacy & Personal data stays off-chain; the decision log stores digests of the inputs. & Design review; \texttt{audit\_log.py}. \\
+NFR7 & Integrity & Editing or deleting an entry in the decision log is detected. & Hash chain; Python tests. \\
+NFR8 & Performance & A risk check takes under 10 seconds per submission. & Measured at about 2.3 seconds on a laptop; to be measured again in the pilot. \\
+NFR9 & Model quality & ROC-AUC of at least 0.90 on held-out wallets, with recall reported. & Currently 0.92; recall is 0.61 and is the weak point. \\
+NFR10 & Usability & Each role finishes its main task from one dashboard. & UI screens in \texttt{web/}; pilot feedback later. \\
+NFR11 & Maintainability & Modules are separated and all tests run with one command. & Repository layout; \texttt{npm test}. \\
+NFR12 & Portability & Runs on Windows, macOS and Linux with Node.js 18 or later and Python 3. & Install steps in the README; no native build step. \\ \hline
+\end{tabularx}
+\caption{Non-functional requirements and how each is checked.}
+\label{tab:nfr}
+\end{table}
+
+\section{Safety rule if the risk engine fails}
+If the Python engine crashes or times out, the API does not let the payment through unchecked. It records a high-risk assessment with the reason ``Risk check unavailable'' and posts a flag, so the payment waits for the arbiter. Because of NFR5 this hold also ends after seven days.
