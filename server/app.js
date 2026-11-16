@@ -1,0 +1,35 @@
+// Builds the Express app. Dependencies (database, chain, risk engine) are passed in,
+// so tests can use an in-memory database and a stand-in risk engine.
+const path = require("path");
+const express = require("express");
+const { makeAuth } = require("./middleware/auth");
+const { makeNotifications } = require("./services/notifications");
+
+function createApp({ db, chain, risk, jwtSecret }) {
+  const app = express();
+  app.use(express.json({ limit: "100kb" }));
+
+  const auth = makeAuth(jwtSecret);
+  const notifications = makeNotifications(db);
+  const deps = { db, chain, risk, auth, notifications };
+
+  const milestones = require("./routes/milestones")(deps);
+
+  app.get("/api/health", (req, res) => res.json({ ok: true }));
+  app.use("/api", require("./routes/auth")(deps));
+  app.use("/api", require("./routes/jobs")(deps));
+  app.use("/api", milestones.router);
+  app.use("/api", require("./routes/arbiter")({ ...deps, milestoneHelpers: milestones }));
+
+  app.use(express.static(path.join(__dirname, "..", "web")));
+
+  // Last-resort error handler: log, and do not leak internals.
+  app.use((err, req, res, next) => {
+    console.error(err);
+    res.status(500).json({ error: "Internal error" });
+  });
+
+  return app;
+}
+
+module.exports = { createApp };

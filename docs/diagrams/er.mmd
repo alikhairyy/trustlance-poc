@@ -1,0 +1,76 @@
+erDiagram
+  direction LR
+  USERS ||--o{ JOBS : "posts (client)"
+  USERS ||--o{ PROPOSALS : "sends (freelancer)"
+  JOBS ||--o{ PROPOSALS : receives
+  JOBS ||--o{ MILESTONES : "split into"
+  MILESTONES ||--o{ RISK_ASSESSMENTS : "scored by"
+  MILESTONES ||--o{ MILESTONE_EVENTS : "history"
+  JOBS ||--o{ REVIEWS : "rated in"
+  USERS ||--o{ NOTIFICATIONS : receives
+  USERS {
+    int id PK
+    text email UK
+    text password_hash
+    text role "client | freelancer | arbiter"
+    text full_name
+    text wallet_address UK
+  }
+  JOBS {
+    int id PK
+    int client_id FK
+    int freelancer_id FK
+    int arbiter_id FK
+    text title
+    text budget_eth
+    text status
+    text escrow_address
+  }
+  PROPOSALS {
+    int id PK
+    int job_id FK
+    int freelancer_id FK
+    text cover_letter
+    text price_eth
+    text status
+  }
+  MILESTONES {
+    int id PK
+    int job_id FK
+    int chain_index
+    text title
+    text amount_eth
+    text status
+    bool risk_flagged
+    bool appealed
+    text review_deadline
+  }
+  RISK_ASSESSMENTS {
+    int id PK
+    int milestone_id FK
+    real score
+    text band
+    text action
+    text reason
+    text audit_hash
+  }
+  MILESTONE_EVENTS {
+    int id PK
+    int milestone_id FK
+    int actor_id FK
+    text event
+    text tx_hash
+  }
+  REVIEWS {
+    int id PK
+    int job_id FK
+    int reviewer_id FK
+    int reviewee_id FK
+    int rating
+  }
+  NOTIFICATIONS {
+    int id PK
+    int user_id FK
+    text message
+    bool is_read
+  }

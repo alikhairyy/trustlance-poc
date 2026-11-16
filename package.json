@@ -1,13 +1,16 @@
 {
   "name": "trustlance-poc",
   "version": "1.0.0",
-  "description": "",
+  "description": "Trustlance: milestone escrow with explainable AI risk scoring for freelance payments",
   "main": "index.js",
   "scripts": {
     "build:contracts": "node scripts/compile.js",
-    "test:contracts": "npm run build:contracts && npx hardhat test --no-compile",
-    "demo": "npm run build:contracts && npx hardhat run scripts/demo.js --no-compile",
+    "test": "npm run build:contracts && npx hardhat test --no-compile",
+    "test:contracts": "npm run build:contracts && npx hardhat test --no-compile test/MilestoneEscrow.test.js test/Security.test.js",
+    "test:api": "npm run build:contracts && npx hardhat test --no-compile test/api/api.test.js",
     "test:risk": "cd risk-engine && python -m unittest -v",
+    "dev": "npm run build:contracts && npx hardhat run --no-compile server/index.js",
+    "demo": "npm run build:contracts && npx hardhat run scripts/demo.js --no-compile",
     "benchmark": "python risk-engine/benchmark.py"
   },
   "keywords": [],
@@ -17,5 +20,10 @@
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "hardhat": "^2.29.1",
     "solc": "^0.8.24"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.2.0",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3"
   }
 }
