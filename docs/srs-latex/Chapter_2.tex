@@ -1,0 +1,33 @@
+\chapter{System Scope and Objectives}
+\label{ch:scope}
+
+\section{Main objective}
+Design and build a freelance payment system that secures milestone payments with a smart contract and an explainable risk score, with a human arbiter making the final decision on any payment that is held or disputed.
+
+\section{Specific objectives}
+\begin{enumerate}
+\item Implement milestone escrow in a smart contract with separate roles for the client, freelancer, arbiter and risk oracle.
+\item Build a risk engine that scores the payout wallet from 0 to 1 and explains the score in plain language.
+\item Train and benchmark the model on real labelled data, and measure what choosing an explainable model costs in accuracy.
+\item Make sure the AI can only hold a payment for human review, can never move money, and that a hold ends after a fixed window.
+\item Provide an on-chain appeal and a tamper-evident log of every automated decision.
+\item Give each role a web application, then evaluate the system with a survey and a small pilot.
+\end{enumerate}
+Objectives 1 to 5 were met by the proof of concept in Milestone~1. Objective 6 is the main work of this milestone and the next.
+
+\section{In scope}
+\begin{itemize}
+\item A web application for clients, freelancers and arbiters.
+\item A REST API and a private database for accounts, jobs, proposals and milestones.
+\item The milestone escrow smart contract, with arbiter, appeal and pause.
+\item The explainable wallet risk engine, its benchmark and its audit log.
+\item A survey and a small pilot on a public test network.
+\end{itemize}
+
+\section{Out of scope}
+\begin{itemize}
+\item Real money on the Ethereum main network before an independent security audit.
+\item Matching freelancers to jobs, or recommending them.
+\item Converting between ETH and local currency.
+\item Legal arbitration across countries.
+\end{itemize}

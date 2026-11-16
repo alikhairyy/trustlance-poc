@@ -1,0 +1,41 @@
+\chapter{Functional Requirements}
+\label{ch:fr}
+
+Each requirement has a status. \textbf{Done} means it is implemented and covered by automated tests. \textbf{Partial} means it works, but with a development stand-in that is named in the table. \textbf{Stub} means the route or table exists but the behaviour is not built yet. \textbf{Planned} means work has not started.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{0.9cm}L>{\raggedright\arraybackslash}p{1.9cm}>{\raggedright\arraybackslash}p{2.6cm}}
+\hline
+\textbf{ID} & \textbf{Requirement} & \textbf{Actor} & \textbf{Status} \\ \hline
+FR1 & Register and log in with a role (client, freelancer or arbiter). & All & Done \\
+FR2 & View and update a profile (name, bio, skills) and see the payout wallet and its balance. & All & Done \\
+FR3 & Post a job with a title, description, budget and required skills. & Client & Done \\
+FR4 & Browse open jobs and send a proposal with a cover letter and a price. & Freelancer & Done \\
+FR5 & Accept a proposal. The job is assigned, an arbiter is chosen, and an escrow contract is deployed for the job. & Client & Partial: the server signs with local test wallets \\
+FR6 & Add milestones (title and amount) to an assigned job. & Client & Done \\
+FR7 & Fund a milestone. The exact amount is locked in the escrow contract. & Client & Done \\
+FR8 & Submit work for a funded milestone with a link to the deliverable. & Freelancer & Done \\
+FR9 & On submission, score the payout wallet and store the score, band, action and reason. & System & Partial: wallet history comes from real dataset wallets \\
+FR10 & When the score is 0.65 or more, post the flag and reason on-chain. The client's approval is then refused for up to 7 days. & System & Done \\
+FR11 & Approve submitted work, which releases the payment, or dispute it. & Client & Done \\
+FR12 & Appeal a flag once, with a note that is stored on-chain. & Freelancer & Done \\
+FR13 & See a queue of flagged and disputed milestones with the reason, the appeal and the deliverable, then release or refund. & Arbiter & Done \\
+FR14 & Pause and unpause a job's contract in an emergency. & Arbiter & Done \\
+FR15 & Write every risk decision to a hash-chained log, and show the full history of a milestone. & All & Done \\
+FR16 & Notify users when something happens to their milestones. & All & Stub: stored, not delivered \\
+FR17 & Rate the other party after a job is completed. & Client, Freelancer & Stub: table and route exist \\
+FR18 & Connect a browser wallet (MetaMask) and sign transactions in the browser. & Client, Freelancer & Planned \\
+FR19 & Add freelancer-history signals, such as completion and dispute rates, to the risk model. & System & Planned \\
+FR20 & Message the other party on a job. & Client, Freelancer & Planned \\ \hline
+\end{tabularx}
+\caption{Functional requirements and their status.}
+\label{tab:fr}
+\end{table}
+
+\section{Notes on the partial requirements}
+\textbf{FR5.} Users do not sign transactions themselves yet. When a user registers, the server gives them one of the funded accounts on the local test chain and signs that user's transactions. This lets the whole flow run today. FR18 replaces it with MetaMask, after which the server will never hold a user's key.
+
+\textbf{FR9.} A wallet created on the local test chain has no history, so there is nothing real to score. Until the system runs on a public test network, each freelancer is linked to one real wallet from the Kaggle dataset~\cite{kaggle}, and the engine scores that wallet. The demo accounts use a legitimate wallet and one the dataset labels as fraud. No synthetic data is used.

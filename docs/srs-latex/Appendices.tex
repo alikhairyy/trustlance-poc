@@ -1,0 +1,60 @@
+This appendix lists the materials produced for this milestone and maps each requirement to the code that implements it.
+
+\begin{itemize}
+\item \textbf{Code (GitHub):} \texttt{https://github.com/alikhairyy/trustlance-poc}
+\item \textbf{Requirements in Markdown:} \texttt{docs/SRS.md}
+\item \textbf{Diagrams:} \texttt{docs/diagrams/} (system overview, use case, activity, ER, class)
+\item \textbf{Database schema:} \texttt{server/db/schema.sql}
+\item \textbf{Security model:} \texttt{docs/SECURITY.md}
+\item \textbf{Dataset and benchmark:} \texttt{docs/DATASET.md} and \texttt{docs/BENCHMARK.md}
+\item \textbf{Presentation:} the Milestone~2 slide deck
+\end{itemize}
+
+\section{Requirement traceability}
+\label{sec:trace}
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{3.4cm}L}
+\hline
+\textbf{Requirement} & \textbf{Code} \\ \hline
+FR1, FR2, NFR3 & \texttt{server/routes/auth.js}, \texttt{server/middleware/auth.js}, \texttt{server/services/passwords.js} \\
+FR3, FR4, FR5 & \texttt{server/routes/jobs.js}, \texttt{server/services/chain.js} \\
+FR6--FR8, FR11, FR12 & \texttt{server/routes/milestones.js}, \texttt{server/services/chain.js} \\
+FR9, FR10, NFR4 & \texttt{server/services/risk.js}, \texttt{risk-engine/engine.py}, \texttt{risk-engine/predict\_cli.py} \\
+FR13, FR14 & \texttt{server/routes/arbiter.js} \\
+FR15, NFR7 & \texttt{risk-engine/audit\_log.py}, \texttt{server/routes/milestones.js} \\
+FR16 & \texttt{server/services/notifications.js} (stub) \\
+FR17 & \texttt{server/routes/jobs.js} and the \texttt{reviews} table (stub) \\
+NFR1, NFR2, NFR5 & \texttt{contracts/MilestoneEscrow.sol}, \texttt{test/} \\
+Database & \texttt{server/db/schema.sql}, \texttt{server/db/index.js} \\
+UI screens & \texttt{web/} \\ \hline
+\end{tabularx}
+\caption{Where each requirement is implemented.}
+\label{tab:trace}
+\end{table}
+
+\section{Main API routes}
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{8.2cm}L}
+\hline
+\textbf{Route} & \textbf{Who and what} \\ \hline
+\texttt{POST /api/auth/register}, \texttt{/login} & Anyone: create an account, log in \\
+\texttt{GET/PUT /api/users/me} & Any user: profile, wallet, balance \\
+\texttt{GET/POST /api/jobs} & Client posts; everyone browses open jobs \\
+\texttt{POST /api/jobs/:id/proposals} & Freelancer sends a proposal \\
+\texttt{POST /api/proposals/:id/accept} & Client accepts; escrow is deployed \\
+\texttt{POST /api/jobs/:id/milestones} & Client adds a milestone \\
+\texttt{POST /api/milestones/:id/fund} & Client funds \\
+\texttt{POST /api/milestones/:id/submit} & Freelancer submits; risk check runs \\
+\texttt{POST /api/milestones/:id/approve}, \texttt{/dispute} & Client decides \\
+\texttt{POST /api/milestones/:id/appeal} & Freelancer appeals a flag \\
+\texttt{GET /api/arbiter/queue} & Arbiter sees held and disputed milestones \\
+\texttt{POST /api/arbiter/milestones/:id/}\\\texttt{release} or \texttt{refund} & Arbiter decides \\
+\texttt{POST /api/arbiter/jobs/:id/pause}, \texttt{/unpause} & Arbiter emergency stop \\ \hline
+\end{tabularx}
+\caption{Main REST API routes.}
+\label{tab:api}
+\end{table}
