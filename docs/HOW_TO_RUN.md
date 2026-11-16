@@ -28,7 +28,7 @@ The last command downloads the Kaggle Ethereum fraud dataset (about 3 MB) into `
 npm run dev
 ```
 
-Wait for `Trustlance running at http://localhost:3000`, then open that address in your browser. The local blockchain and the database start empty every time, and four demo accounts are created for you. They all use the password `demo1234`:
+Wait for `Trustlance running at http://localhost:3000`, then open that address in your browser. It opens on the landing page that explains Trustlance; click **Get started** to reach the login page. The local blockchain and the database start empty every time, and four demo accounts are created for you. They all use the password `demo1234`:
 
 | Email | Role | What it shows |
 |---|---|---|
