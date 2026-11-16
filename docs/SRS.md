@@ -1,7 +1,7 @@
 # Trustlance: Software Requirements Specification (Milestone 2)
 
 Team: Ali Khairy, Hamza Milad, Youssef Eslam, Adam Elshal, Abdelrahman Amgad
-Supervisor: Dr. Mohamed Ghoneimy
+Supervisor: Dr. Raghda Essam
 
 ## 1. Introduction and problem
 
