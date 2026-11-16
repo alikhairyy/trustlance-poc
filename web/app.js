@@ -74,10 +74,10 @@ function renderChrome() {
   const route = location.hash || "#/";
   $("#nav").innerHTML = state.user
     ? NAV[state.user.role].map(([h, l]) => `<a href="${h}" class="${route === h ? "active" : ""}">${l}</a>`).join("")
-    : "";
+    : `<a href="#/" class="${route === "#/" ? "active" : ""}">Home</a><a href="#/login" class="${route === "#/login" ? "active" : ""}">Log in</a>`;
   $("#who").innerHTML = state.user
     ? `${esc(state.user.full_name)} ${pill(state.user.role)} <button id="logout">Log out</button>`
-    : "";
+    : `<a class="nav-cta" href="#/login">Get started</a>`;
   if (state.user) $("#logout").onclick = logout;
 }
 
@@ -87,7 +87,7 @@ async function render() {
   }
   renderChrome();
   const view = $("#view");
-  if (!state.user) return renderLogin(view);
+  if (!state.user) return (location.hash === "#/login" ? renderLogin : renderLanding)(view);
 
   const route = location.hash || "#/";
   const jobMatch = route.match(/^#\/job\/(\d+)$/);
@@ -103,6 +103,56 @@ async function render() {
 }
 
 // ---------- screens ----------
+
+// Public landing page: what Trustlance does, for visitors who are not logged in.
+function renderLanding(view) {
+  view.innerHTML = `
+    <section class="hero">
+      <p class="eyebrow">Freelance payments with escrow, explainable AI and a human in the loop</p>
+      <h1>Get paid for every milestone, and know why if a payment is held.</h1>
+      <p class="hero-sub">Trustlance locks each milestone payment in a smart contract. When work is submitted, an AI model checks the wallet that will receive the money and explains its score in plain words. Normal payments go through at once. A risky one waits for a human arbiter, for seven days at most.</p>
+      <div class="row">
+        <a class="btn" href="#/login">Get started</a>
+        <button class="secondary" id="howBtn">See how it works</button>
+      </div>
+    </section>
+
+    <section class="facts">
+      <div><strong>0.92</strong><span>ROC-AUC of the risk model on 8,731 real labelled wallets</span></div>
+      <div><strong>7 days</strong><span>longest the AI can hold a payment; it can never move money</span></div>
+      <div><strong>100%</strong><span>of flags come with a written reason the freelancer can appeal</span></div>
+    </section>
+
+    <section id="how">
+      <h2 class="section-title">How it works</h2>
+      <div class="grid steps-grid">
+        <div class="card step-card"><span class="step-n">1</span><h3>The client funds a milestone</h3><p>The agreed amount is locked in a smart contract made for the job. Neither side, and not the platform, can take it out alone.</p></div>
+        <div class="card step-card"><span class="step-n">2</span><h3>The freelancer submits the work</h3><p>Our risk engine scores the payout wallet from 0 to 1 and names the three facts that moved the score most.</p></div>
+        <div class="card step-card"><span class="step-n">3</span><h3>Paid now, or reviewed by a person</h3><p>Low risk: the client approves and the money is released at once. High risk: the payment is held, the freelancer can appeal, and an arbiter decides.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="section-title">Built for everyone in the job</h2>
+      <div class="grid">
+        <div class="card"><h3>Freelancers</h3><p>The money for each milestone is locked before you start. If a payment is ever held, you see exactly why and can appeal on the record.</p></div>
+        <div class="card"><h3>Clients</h3><p>You pay into escrow, approve when you are happy, and can dispute work that was not delivered. Payouts to wallets that look like fraud are stopped for review.</p></div>
+        <div class="card"><h3>Arbiters</h3><p>One queue with the score, the reason, the appeal and the deliverable side by side. The contract lets you release or refund, nothing else.</p></div>
+      </div>
+    </section>
+
+    <section class="cta card">
+      <div>
+        <h2>Try it with the demo accounts</h2>
+        <p class="muted">Log in as a client, a freelancer or an arbiter and follow one payment from start to finish.</p>
+      </div>
+      <a class="btn" href="#/login">Open the demo</a>
+    </section>
+
+    <p class="footer-note">Trustlance is a graduation project at ESLSCA University, running on a test blockchain with test ETH. No real money is involved.</p>`;
+  $("#howBtn").onclick = () => $("#how").scrollIntoView({ behavior: "smooth" });
+}
+
 function renderLogin(view) {
   view.innerHTML = `
     <div class="login">
@@ -141,6 +191,7 @@ function renderLogin(view) {
       const r = await api("POST", "/auth/register", formData(e.target));
       state.token = r.token;
       localSet("tl_token", r.token);
+      location.hash = "#/";
     }, "Account created");
   };
 }

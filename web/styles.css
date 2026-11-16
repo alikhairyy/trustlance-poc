@@ -54,3 +54,26 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: upp
 .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; }
 .timeline { list-style: none; padding: 0; margin: 8px 0 0; }
 .timeline li { padding: 4px 0 4px 14px; border-left: 2px solid var(--line); font-size: 13px; }
+
+/* landing page */
+.nav-cta { background: #5eead4; color: var(--navy); font-weight: 700; padding: 7px 14px; border-radius: 7px; text-decoration: none; }
+.btn { display: inline-block; padding: 10px 18px; border-radius: 7px; background: var(--teal); color: #fff; font-weight: 600; text-decoration: none; }
+.hero { padding: 36px 0 28px; max-width: 860px; }
+.hero .eyebrow { color: var(--teal); font-weight: 700; font-size: 13px; letter-spacing: .6px; text-transform: uppercase; margin: 0 0 12px; }
+.hero h1 { font-size: 40px; line-height: 1.15; margin: 0 0 16px; color: var(--navy); }
+.hero-sub { font-size: 17px; color: #374151; margin: 0 0 24px; }
+.hero .row button { padding: 10px 18px; }
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 8px 0 36px; }
+.facts div { background: var(--navy); color: #fff; border-radius: 10px; padding: 18px 20px; }
+.facts strong { display: block; font-size: 28px; color: #5eead4; }
+.facts span { font-size: 14px; color: #cbd5e1; }
+.section-title { font-size: 24px; margin: 8px 0 16px; color: var(--navy); }
+section { margin-bottom: 28px; }
+.step-card { position: relative; }
+.step-n { display: inline-flex; width: 30px; height: 30px; border-radius: 50%; background: var(--teal); color: #fff; font-weight: 700; align-items: center; justify-content: center; margin-bottom: 8px; }
+.card h3 { margin: 0 0 6px; font-size: 17px; }
+.card p { margin: 0; color: #374151; }
+.cta { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.cta h2 { margin: 0 0 4px; }
+.footer-note { color: var(--muted); font-size: 13px; text-align: center; margin: 24px 0 40px; }
+@media (max-width: 760px) { .facts { grid-template-columns: 1fr; } .hero h1 { font-size: 30px; } }
