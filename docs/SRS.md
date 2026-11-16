@@ -45,8 +45,8 @@ Objectives:
 ## 4. Functional requirements
 
 Status: **Done** = implemented and tested in this repository; **Partial** = works
-with a development stand-in that is named; **Stub** = interface and route exist,
-returns `501 Not Implemented`; **Planned** = not started.
+with a development stand-in that is named; **Stub** = interface, route or table exists but
+the behaviour is not built (ratings return `501 Not Implemented`); **Planned** = not started.
 
 | ID | Requirement | Actor | Status |
 |---|---|---|---|
@@ -113,16 +113,16 @@ returns `501 Not Implemented`; **Planned** = not started.
 
 | Requirement | Code |
 |---|---|
-| FR1, FR2, NFR3 | server/routes/auth.js, server/routes/users.js, server/services/passwords.js |
-| FR3, FR4, FR5 | server/routes/jobs.js, server/routes/proposals.js, server/services/chain.js (deployEscrow) |
+| FR1, FR2, NFR3 | server/routes/auth.js, server/middleware/auth.js, server/services/passwords.js |
+| FR3, FR4, FR5 | server/routes/jobs.js (jobs and proposals), server/services/chain.js (deployEscrow) |
 | FR6, FR7, FR8, FR11, FR12 | server/routes/milestones.js, server/services/chain.js |
 | FR9, FR10, NFR4 | server/services/risk.js, risk-engine/engine.py, risk-engine/predict_cli.py |
 | FR13, FR14 | server/routes/arbiter.js |
 | FR15, NFR7 | risk-engine/audit_log.py, server/routes/milestones.js (GET /milestones/:id history) |
 | FR16 | server/services/notifications.js (stub) |
-| FR17 | server/routes/reviews.js (stub), reviews table |
+| FR17 | server/routes/jobs.js (POST /jobs/:id/reviews returns 501), reviews table |
 | NFR1, NFR2, NFR5 | contracts/MilestoneEscrow.sol, test/*.test.js, test/api/*.test.js |
-| Database | server/db/schema.sql |
+| Database | server/db/schema.sql, server/db/index.js (SQLite via sql.js) |
 | UI screens | web/ |
 
 ## 9. Implementation progress
