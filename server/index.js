@@ -15,7 +15,7 @@ const { makeRiskService } = require("./services/risk");
 const { seedDemo } = require("./seed");
 
 async function main() {
-  const db = openDatabase(process.env.DB_PATH || ":memory:");
+  const db = await openDatabase(process.env.DB_PATH || ":memory:");
   const chain = makeChain(ethers);
   const risk = makeRiskService();
   const app = createApp({ db, chain, risk, jwtSecret: process.env.JWT_SECRET || crypto.randomBytes(32).toString("hex") });

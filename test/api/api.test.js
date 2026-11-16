@@ -45,7 +45,7 @@ describe("Trustlance API", function () {
 
   let t;
   before(async function () {
-    const db = openDatabase(":memory:");
+    const db = await openDatabase(":memory:");
     const chain = makeChain(ethers);
     await seedDemo(db, chain);
     const app = createApp({ db, chain, risk: fakeRisk, jwtSecret: "test-secret" });
