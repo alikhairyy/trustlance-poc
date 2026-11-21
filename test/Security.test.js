@@ -154,6 +154,10 @@ describe("MilestoneEscrow security hardening", function () {
 
     it("records every arbiter decision with whether the milestone was flagged and appealed", async function () {
       await fundedAndSubmitted();
+      // Ordinary submitted work (not flagged, not disputed) is the client's call, not the arbiter's.
+      await expect(escrow.connect(arbiter).arbiterRelease(0)).to.be.revertedWithCustomError(escrow, "NotUnderReview");
+      await expect(escrow.connect(arbiter).arbiterRefund(0)).to.be.revertedWithCustomError(escrow, "NotUnderReview");
+
       await escrow.connect(riskOracle).flagRisk(0, "high risk");
       await escrow.connect(freelancer).appealFlag(0, "please review");
 
@@ -211,6 +215,7 @@ describe("MilestoneEscrow security hardening", function () {
       await attacker.setEscrow(await target.getAddress());
       await attacker.setup(AMOUNT, { value: AMOUNT });
       await target.connect(freelancer).submitWork(0);
+      await target.connect(riskOracle).flagRisk(0, "high risk"); // the arbiter only refunds flagged or disputed work
 
       await target.connect(arbiter).arbiterRefund(0);
 

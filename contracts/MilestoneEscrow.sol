@@ -88,6 +88,7 @@ contract MilestoneEscrow {
     error Reentrancy();
     error NotFlagged();
     error AlreadyAppealed();
+    error NotUnderReview();
 
     modifier onlyClient() {
         if (msg.sender != client) revert NotClient();
@@ -222,10 +223,20 @@ contract MilestoneEscrow {
         emit MilestoneDisputed(id);
     }
 
+    /// @dev The arbiter decides only what is put in front of them: a disputed milestone,
+    ///      or submitted work the risk oracle flagged. During an emergency pause the
+    ///      arbiter may also settle any submitted work, so funds are never stuck.
+    ///      Ordinary submitted work stays the client's decision.
+    function _requireUnderReview(Milestone storage m) private view {
+        if (m.status == Status.Disputed) return;
+        if (m.status != Status.Submitted) revert WrongStatus(m.status);
+        if (!m.riskFlagged && !paused) revert NotUnderReview();
+    }
+
     /// @notice Arbiter releases a risk-flagged or disputed milestone to the freelancer.
     function arbiterRelease(uint256 id) external onlyArbiter nonReentrant validMilestone(id) {
         Milestone storage m = milestones[id];
-        if (m.status != Status.Submitted && m.status != Status.Disputed) revert WrongStatus(m.status);
+        _requireUnderReview(m);
         emit ArbiterDecided(id, true, m.riskFlagged, m.appealed);
         _release(id, true);
     }
@@ -233,7 +244,7 @@ contract MilestoneEscrow {
     /// @notice Arbiter refunds a disputed or risk-flagged milestone to the client.
     function arbiterRefund(uint256 id) external onlyArbiter nonReentrant validMilestone(id) {
         Milestone storage m = milestones[id];
-        if (m.status != Status.Submitted && m.status != Status.Disputed) revert WrongStatus(m.status);
+        _requireUnderReview(m);
         m.status = Status.Refunded; // effects before interaction
         emit ArbiterDecided(id, false, m.riskFlagged, m.appealed);
         (bool ok, ) = client.call{value: m.amount}("");

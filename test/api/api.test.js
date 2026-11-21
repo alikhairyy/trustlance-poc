@@ -65,12 +65,18 @@ describe("Trustlance API", function () {
       expect(r.body.user).to.not.have.property("password_hash");
       const me = await call("GET", "/api/users/me", null, r.body.token);
       expect(me.body.email).to.equal("new@x.com");
+      // Emails ignore case, and a user cannot pick the dataset wallet the risk engine scores.
+      expect((await call("POST", "/api/auth/login", { email: "NEW@x.com", password: "longpassword" })).status).to.equal(200);
+      expect((await call("PUT", "/api/users/me", { dev_risk_profile: "legit" }, r.body.token)).status).to.equal(403);
     });
 
     it("rejects a wrong password and a short password", async function () {
       expect((await call("POST", "/api/auth/login", { email: "client@demo.com", password: "nope" })).status).to.equal(401);
       const r = await call("POST", "/api/auth/register", { email: "s@x.com", password: "short", full_name: "S", role: "client" });
       expect(r.status).to.equal(400);
+      const bad = { password: "longpassword", full_name: "S", role: "client" };
+      expect((await call("POST", "/api/auth/register", { ...bad, email: "not-an-email" })).status).to.equal(400);
+      expect((await call("POST", "/api/auth/register", { ...bad, email: "CLIENT@demo.com" })).status).to.equal(409);
     });
 
     it("requires a token", async function () {
@@ -82,6 +88,7 @@ describe("Trustlance API", function () {
     it("only clients post jobs; freelancers see open jobs and send proposals", async function () {
       const fl = await login("freelancer@demo.com");
       expect((await call("POST", "/api/jobs", { title: "x", description: "y", budget_eth: "1" }, fl)).status).to.equal(403);
+      expect((await call("POST", "/api/jobs", { title: "   ", description: "y", budget_eth: "1" }, t.client)).status).to.equal(400);
       const open = await call("GET", "/api/jobs", null, fl);
       expect(open.body.length).to.be.greaterThan(0);
       const p = await call("POST", `/api/jobs/${open.body[0].id}/proposals`, { cover_letter: "I can do it", price_eth: "1.2" }, fl);
@@ -96,15 +103,27 @@ describe("Trustlance API", function () {
       expect(j.status).to.equal("in_progress");
       expect(j.escrow_address).to.match(/^0x/);
       expect(await ethers.provider.getCode(j.escrow_address)).to.not.equal("0x");
+      // The job's budget is 1 ETH and 0.5 ETH is already planned, so another 0.6 ETH does not fit.
+      const over = await call("POST", `/api/jobs/${job.id}/milestones`, { title: "Too much", amount_eth: "0.6" }, t.client);
+      expect(over.status).to.equal(400);
+      // A milestone that was never funded can be cancelled.
+      const extra = (await call("POST", `/api/jobs/${job.id}/milestones`, { title: "Maybe", amount_eth: "0.4" }, t.client)).body;
+      expect((await call("POST", `/api/milestones/${extra.id}/cancel`, null, t.client)).body.status).to.equal("cancelled");
     });
   });
 
   describe("milestone payments (FR6 to FR13)", function () {
     it("low risk: submit, then client approval releases the funds on-chain", async function () {
       const { m, fl } = await fundedMilestone(t, "freelancer@demo.com", "0.5");
+      const badLink = await call("POST", `/api/milestones/${m.id}/submit`, { deliverable_url: "javascript:alert(1)" }, fl);
+      expect(badLink.status).to.equal(400);
       const sub = await call("POST", `/api/milestones/${m.id}/submit`, { deliverable_url: "https://example.com/work" }, fl);
       expect(sub.body.risk.action).to.equal("auto_approve");
       expect(sub.body.milestone.risk_flagged).to.equal(0);
+      // Unflagged, undisputed work is the client's decision, so the arbiter cannot settle it.
+      const arb = await call("POST", `/api/arbiter/milestones/${m.id}/refund`, null, t.arbiter);
+      expect(arb.status).to.equal(409);
+      expect(arb.body.contract_error).to.equal("NotUnderReview");
       const ok = await call("POST", `/api/milestones/${m.id}/approve`, null, t.client);
       expect(ok.status).to.equal(200);
       expect(ok.body.status).to.equal("released");
@@ -154,6 +173,7 @@ describe("Trustlance API", function () {
       const blocked = await call("POST", `/api/jobs/${job.id}/milestones`, { title: "M2", amount_eth: "0.1" }, t.client);
       expect(blocked.status).to.equal(423);
       expect((await call("POST", `/api/arbiter/jobs/${job.id}/unpause`, null, t.arbiter)).body.paused).to.equal(false);
+      expect((await call("POST", `/api/arbiter/jobs/${job.id}/unpause`, null, t.arbiter)).status).to.equal(409);
       expect(m.status).to.equal("pending");
     });
   });

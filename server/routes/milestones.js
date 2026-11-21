@@ -1,7 +1,7 @@
 // FR6 add milestones, FR7 fund, FR8 submit (+ FR9/FR10 risk check), FR11 approve / dispute,
 // FR12 appeal, FR15 milestone history.
 const express = require("express");
-const { wrap, cleanEth } = require("./util");
+const { wrap, cleanEth, cleanText, toWei, isWebUrl } = require("./util");
 
 module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications }) {
   const router = express.Router();
@@ -39,6 +39,10 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
       res.status(403).json({ error: `Only this job's ${role} can do this` });
       return null;
     }
+    if (m.status === "cancelled") {
+      res.status(409).json({ error: "This milestone was cancelled" });
+      return null;
+    }
     return { m, job };
   }
 
@@ -51,6 +55,8 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
       NotFlagged: [409, "Only a flagged milestone can be appealed"],
       ContractPaused: [423, "This job's contract is paused by the arbiter"],
       TextTooLong: [400, "Text is too long (max 512 bytes)"],
+      NotPaused: [409, "This job's contract is not paused"],
+      NotUnderReview: [409, "The arbiter can only decide flagged or disputed milestones"],
     };
     const [status, message] = map[err.contractError] || [502, `Blockchain error: ${err.message}`];
     return res.status(status).json({ error: message, contract_error: err.contractError || null });
@@ -63,9 +69,19 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
       const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(req.params.id);
       if (!job || job.client_id !== req.user.id) return res.status(404).json({ error: "Job not found" });
       if (job.status !== "in_progress") return res.status(409).json({ error: "Accept a proposal before adding milestones" });
-      const { title, amount_eth } = req.body || {};
-      const amount = cleanEth(amount_eth);
-      if (!title || !amount) return res.status(400).json({ error: "title and a positive amount_eth are required" });
+      const title = cleanText(req.body && req.body.title, 120);
+      const amount = cleanEth(req.body && req.body.amount_eth);
+      if (!title || !amount) {
+        return res.status(400).json({ error: "A title (max 120 characters) and a positive amount_eth are required" });
+      }
+      // Milestones cannot add up to more than the job's budget (refunded and cancelled ones do not count).
+      const used = db
+        .prepare("SELECT amount_eth FROM milestones WHERE job_id = ? AND status NOT IN ('refunded', 'cancelled')")
+        .all(job.id)
+        .reduce((sum, row) => sum + toWei(row.amount_eth), 0n);
+      if (used + toWei(amount) > toWei(job.budget_eth)) {
+        return res.status(400).json({ error: `Milestones would exceed the job budget of ${job.budget_eth} ETH` });
+      }
       try {
         const { chainIndex, txHash } = await chain.addMilestone(job.escrow_address, user(req.user.id), amount);
         const info = db
@@ -119,8 +135,12 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
     wrap(async (req, res) => {
       const ctx = load(req, res, "freelancer");
       if (!ctx) return;
-      const { deliverable_url, note } = req.body || {};
-      if (!deliverable_url) return res.status(400).json({ error: "deliverable_url is required" });
+      const { note } = req.body || {};
+      const deliverable_url = String((req.body && req.body.deliverable_url) || "").trim();
+      if (!isWebUrl(deliverable_url) || deliverable_url.length > 2000) {
+        return res.status(400).json({ error: "The deliverable must be a web link starting with http:// or https://" });
+      }
+      if (String(note || "").length > 2000) return res.status(400).json({ error: "The note is limited to 2000 characters" });
       let txHash;
       try {
         ({ txHash } = await chain.submit(ctx.job.escrow_address, user(req.user.id), ctx.m.chain_index));
@@ -166,12 +186,33 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
     })
   );
 
+  // A job is completed once every milestone is settled (cancelled ones are ignored).
   async function finishIfDone(job) {
-    const open = db
-      .prepare("SELECT COUNT(*) AS n FROM milestones WHERE job_id = ? AND status NOT IN ('released', 'refunded')")
-      .get(job.id).n;
-    if (open === 0) db.prepare("UPDATE jobs SET status = 'completed' WHERE id = ?").run(job.id);
+    const counts = db
+      .prepare(
+        `SELECT SUM(status NOT IN ('released', 'refunded', 'cancelled')) AS open,
+                SUM(status IN ('released', 'refunded')) AS settled
+         FROM milestones WHERE job_id = ?`
+      )
+      .get(job.id);
+    if (!counts.open && counts.settled > 0) db.prepare("UPDATE jobs SET status = 'completed' WHERE id = ?").run(job.id);
   }
+
+  // The client can cancel a milestone that was never funded, so it does not block the job from finishing.
+  // Nothing was paid into the contract for it, so this only changes the platform's records.
+  router.post(
+    "/milestones/:id/cancel",
+    wrap(async (req, res) => {
+      const ctx = load(req, res, "client");
+      if (!ctx) return;
+      const s = await chain.readMilestone(ctx.job.escrow_address, ctx.m.chain_index);
+      if (s.status !== "pending") return res.status(409).json({ error: "Only a milestone that was never funded can be cancelled" });
+      db.prepare("UPDATE milestones SET status = 'cancelled' WHERE id = ?").run(ctx.m.id);
+      logEvent(ctx.m.id, req.user.id, "cancelled", "Cancelled before funding");
+      await finishIfDone(ctx.job);
+      res.json(db.prepare("SELECT * FROM milestones WHERE id = ?").get(ctx.m.id));
+    })
+  );
 
   router.post(
     "/milestones/:id/approve",

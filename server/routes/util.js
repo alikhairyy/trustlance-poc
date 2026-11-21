@@ -17,4 +17,27 @@ function cleanEth(value) {
   return s;
 }
 
-module.exports = { wrap, publicUser, cleanEth };
+// Exact ETH amount in wei, as a BigInt, so sums of decimals do not lose precision.
+function toWei(eth) {
+  const [whole, frac = ""] = String(eth).split(".");
+  return BigInt(whole) * 10n ** 18n + BigInt(frac.padEnd(18, "0"));
+}
+
+// Trims a text field and checks its length. Returns the trimmed text, or null.
+function cleanText(value, maxLength) {
+  const s = String(value ?? "").trim();
+  if (!s || s.length > maxLength) return null;
+  return s;
+}
+
+// Only plain web links can be submitted as deliverables (no javascript: or data: links).
+function isWebUrl(value) {
+  try {
+    const u = new URL(String(value ?? "").trim());
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { wrap, publicUser, cleanEth, toWei, cleanText, isWebUrl };

@@ -7,6 +7,10 @@ function localSet(k, v) { try { v == null ? localStorage.removeItem(k) : localSt
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Deliverable links: only http(s) links are clickable; anything else is shown as plain text.
+const webLink = (url) => (/^https?:\/\//i.test(String(url ?? "").trim())
+  ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`
+  : esc(url));
 const pill = (text, cls = text) => `<span class="pill ${esc(cls)}">${esc(String(text).replace(/_/g, " "))}</span>`;
 
 function toast(msg, isError = false) {
@@ -254,7 +258,7 @@ function riskBlock(m, detail) {
   if (!r) return "";
   return `<div class="reason ${r.band === "low" ? "ok" : ""}">
     ${pill(`risk ${r.band} · ${Number(r.score).toFixed(2)}`, r.band)} ${esc(r.reason)}
-    ${m.risk_flagged ? `<div class="muted">Held for arbiter review until ${esc(new Date(m.review_deadline).toLocaleString())}</div>` : ""}
+    ${m.risk_flagged && ["funded", "submitted"].includes(m.status) && m.review_deadline ? `<div class="muted">Held for arbiter review until ${esc(new Date(m.review_deadline).toLocaleString())}</div>` : ""}
   </div>`;
 }
 
@@ -267,7 +271,10 @@ async function renderJob(view, id) {
 
   const milestoneCard = (m, d) => {
     const buttons = [];
-    if (isClient && m.status === "pending") buttons.push(`<button data-a="fund" data-id="${m.id}">Fund ${esc(m.amount_eth)} ETH</button>`);
+    if (isClient && m.status === "pending") {
+      buttons.push(`<button data-a="fund" data-id="${m.id}">Fund ${esc(m.amount_eth)} ETH</button>`);
+      buttons.push(`<button class="secondary" data-a="cancel" data-id="${m.id}">Cancel milestone</button>`);
+    }
     if (isClient && m.status === "submitted") {
       buttons.push(`<button data-a="approve" data-id="${m.id}">Approve and release</button>`);
       buttons.push(`<button class="secondary" data-a="dispute" data-id="${m.id}">Dispute</button>`);
@@ -280,7 +287,7 @@ async function renderJob(view, id) {
     }
     return `<div class="card">
       <div class="row spread"><h2>${esc(m.title)}</h2><div>${esc(m.amount_eth)} ETH ${pill(m.status)} ${m.risk_flagged ? pill("flagged") : ""} ${m.appealed ? pill("appealed") : ""}</div></div>
-      ${m.deliverable_url ? `<p class="muted">Deliverable: <a href="${esc(m.deliverable_url)}" target="_blank" rel="noopener">${esc(m.deliverable_url)}</a></p>` : ""}
+      ${m.deliverable_url ? `<p class="muted">Deliverable: ${webLink(m.deliverable_url)}</p>` : ""}
       ${riskBlock(m, d)}
       <div class="row">${buttons.join("")}</div>
       <details style="margin-top:10px"><summary class="muted">History</summary><ul class="timeline">
@@ -315,6 +322,7 @@ async function renderJob(view, id) {
       b.disabled = true;
       const a = b.dataset.a;
       if (a === "fund") return act(() => api("POST", `/milestones/${mid}/fund`), "Funds locked in escrow");
+      if (a === "cancel") return act(() => api("POST", `/milestones/${mid}/cancel`), "Milestone cancelled");
       if (a === "approve") return act(() => api("POST", `/milestones/${mid}/approve`), "Payment released");
       if (a === "dispute") return act(() => api("POST", `/milestones/${mid}/dispute`, { reason: "Disputed by client" }), "Sent to the arbiter");
       if (a === "appeal") return act(() => api("POST", `/milestones/${mid}/appeal`, { note: $(`#note-${mid}`).value }), "Appeal recorded on-chain");
@@ -339,13 +347,15 @@ async function renderArbiterQueue(view) {
         <p class="muted">Client ${esc(q.client_name)} · Freelancer ${esc(q.freelancer_name)}${q.review_deadline ? ` · Review window ends ${esc(new Date(q.review_deadline).toLocaleString())}` : ""}</p>
         ${q.risk_reason ? `<div class="reason">${pill(`risk ${Number(q.risk_score).toFixed(2)}`, "high")} ${esc(q.risk_reason)}</div>` : ""}
         ${q.appeal_note ? `<p><strong>Freelancer's appeal:</strong> ${esc(q.appeal_note)}</p>` : ""}
-        ${q.deliverable_url ? `<p class="muted">Deliverable: <a href="${esc(q.deliverable_url)}" target="_blank" rel="noopener">${esc(q.deliverable_url)}</a></p>` : ""}
+        ${q.deliverable_url ? `<p class="muted">Deliverable: ${webLink(q.deliverable_url)}</p>` : ""}
         <div class="row"><button data-d="release" data-id="${q.id}">Release to freelancer</button><button class="danger" data-d="refund" data-id="${q.id}">Refund client</button>
           <a href="#/job/${q.job_id}" class="muted">Full history</a></div>
       </div>`).join("") || `<div class="card muted">Nothing to review.</div>`}
     <div class="card"><h2>Your jobs</h2>${jobs.length ? `<table><tr><th>Job</th><th>Status</th><th>Emergency</th></tr>
       ${jobs.map((j) => `<tr><td><a href="#/job/${j.id}">${esc(j.title)}</a></td><td>${pill(j.status)}</td>
-        <td><button class="secondary" data-p="pause" data-j="${j.id}">Pause</button> <button class="secondary" data-p="unpause" data-j="${j.id}">Unpause</button></td></tr>`).join("")}</table>`
+        <td>${j.status !== "in_progress" ? `<span class="muted">Not needed</span>`
+          : j.paused ? `${pill("paused")} <button class="secondary" data-p="unpause" data-j="${j.id}">Unpause</button>`
+          : `<button class="secondary" data-p="pause" data-j="${j.id}">Pause</button>`}</td></tr>`).join("")}</table>`
       : `<p class="muted">No jobs assigned.</p>`}</div>`;
   view.querySelectorAll("[data-d]").forEach((b) => {
     b.onclick = () => act(() => api("POST", `/arbiter/milestones/${b.dataset.id}/${b.dataset.d}`), b.dataset.d === "release" ? "Released" : "Refunded");
@@ -365,8 +375,7 @@ async function renderProfile(view) {
           <label>Full name</label><input name="full_name" value="${esc(me.full_name)}" />
           <label>Bio</label><textarea name="bio">${esc(me.bio)}</textarea>
           <label>Skills</label><input name="skills" value="${esc(me.skills)}" />
-          ${me.role === "freelancer" ? `<label>Development only: wallet history used by the risk engine</label>
-            <select name="dev_risk_profile">${["legit", "fraud", "false_positive"].map((p) => `<option ${p === me.dev_risk_profile ? "selected" : ""}>${p}</option>`).join("")}</select>` : ""}
+          ${me.role === "freelancer" ? `<p class="muted" style="margin-top:12px">Development only: the risk engine scores a real dataset wallet (${esc(me.dev_risk_profile)}) as your payout history. It is set when the account is created and cannot be changed here.</p>` : ""}
           <div class="row" style="margin-top:14px"><button>Save</button></div>
         </form>
       </div>

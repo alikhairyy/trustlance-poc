@@ -77,3 +77,6 @@ section { margin-bottom: 28px; }
 .cta h2 { margin: 0 0 4px; }
 .footer-note { color: var(--muted); font-size: 13px; text-align: center; margin: 24px 0 40px; }
 @media (max-width: 760px) { .facts { grid-template-columns: 1fr; } .hero h1 { font-size: 30px; } }
+
+/* Long titles, links and names wrap instead of stretching the page sideways. */
+h1, h2, p, td, li, .reason { overflow-wrap: anywhere; }

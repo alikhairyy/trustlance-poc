@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS milestones (
   title            TEXT    NOT NULL,
   amount_eth       TEXT    NOT NULL,
   status           TEXT    NOT NULL DEFAULT 'pending'
-                   CHECK (status IN ('pending', 'funded', 'submitted', 'released', 'disputed', 'refunded')),
+                   CHECK (status IN ('pending', 'funded', 'submitted', 'released', 'disputed', 'refunded', 'cancelled')),
+                   -- 'cancelled' exists only here: a never-funded milestone the client removed (no money moved).
   deliverable_url  TEXT,
   submission_note  TEXT,
   risk_flagged     INTEGER NOT NULL DEFAULT 0,
