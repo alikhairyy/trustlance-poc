@@ -21,6 +21,8 @@ function createApp({ db, chain, risk, jwtSecret }) {
   app.use("/api", milestones.router);
   app.use("/api", require("./routes/arbiter")({ ...deps, milestoneHelpers: milestones }));
 
+  app.use("/api", (req, res) => res.status(404).json({ error: "No such API route" }));
+
   app.use(express.static(path.join(__dirname, "..", "web")));
 
   // Last-resort error handler: log, and do not leak internals.

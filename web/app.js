@@ -43,6 +43,8 @@ async function act(fn, okMsg) {
     render();
   } catch (e) {
     toast(e.message, true);
+    // The page is not re-rendered after an error, so turn the buttons back on to allow a retry.
+    document.querySelectorAll("main button:disabled").forEach((b) => { b.disabled = false; });
   }
 }
 
@@ -262,6 +264,17 @@ function riskBlock(m, detail) {
   </div>`;
 }
 
+// Budget not yet planned into milestones (refunded and cancelled ones give their amount back).
+// Works in wei-like integers so 1.5 - 0.6 shows 0.9, not 0.8999999.
+function budgetLeft(job) {
+  const wei = (s) => { const [w, f = ""] = String(s).split("."); return BigInt(w) * 10n ** 18n + BigInt(f.padEnd(18, "0").slice(0, 18)); };
+  const used = job.milestones.filter((m) => !["refunded", "cancelled"].includes(m.status)).reduce((s, m) => s + wei(m.amount_eth), 0n);
+  const left = wei(job.budget_eth) - used;
+  if (left <= 0n) return "0";
+  const whole = left / 10n ** 18n, frac = (left % 10n ** 18n).toString().padStart(18, "0").replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : `${whole}`;
+}
+
 async function renderJob(view, id) {
   const job = await api("GET", `/jobs/${id}`);
   const role = state.user.role;
@@ -308,12 +321,20 @@ async function renderJob(view, id) {
         <td><button data-accept="${p.id}">Accept</button></td></tr>`).join("")}</table>` : `<p class="muted">No proposals yet.</p>`}</div>` : ""}
     ${job.status !== "open" ? `<h2 style="margin-top:8px">Milestones</h2>${job.milestones.map((m, i) => milestoneCard(m, details[i])).join("") || `<p class="muted">No milestones yet.</p>`}` : ""}
     ${isClient && job.status === "in_progress" ? `<div class="card"><h2>Add a milestone</h2>
+      <p class="muted">Budget left: ${esc(budgetLeft(job))} ETH of ${esc(job.budget_eth)} ETH</p>
       <form id="msForm" class="row"><input name="title" placeholder="Title" required style="max-width:300px" />
-      <input name="amount_eth" placeholder="Amount (ETH)" required style="max-width:160px" /><button>Add</button></form></div>` : ""}`;
+      <input name="amount_eth" placeholder="Amount (ETH)" required style="max-width:160px" /><button>Add</button></form>
+      ${job.milestones.length && job.milestones.every((m) => ["released", "refunded", "cancelled"].includes(m.status))
+        ? `<div class="row" style="margin-top:12px"><button class="secondary" id="closeJob">Close job</button>
+           <span class="muted">All milestones are settled. Close the job if the work is finished.</span></div>` : ""}</div>` : ""}`;
 
   view.querySelectorAll("[data-accept]").forEach((b) => {
     b.onclick = () => act(() => api("POST", `/proposals/${b.dataset.accept}/accept`), "Proposal accepted. Escrow contract deployed.");
   });
+  const closeJob = $("#closeJob");
+  if (closeJob) closeJob.onclick = () => {
+    if (confirm("Close this job? No more milestones can be added after this.")) act(() => api("POST", `/jobs/${id}/complete`), "Job closed");
+  };
   const msForm = $("#msForm");
   if (msForm) msForm.onsubmit = (e) => { e.preventDefault(); act(() => api("POST", `/jobs/${id}/milestones`, formData(msForm)), "Milestone added"); };
   view.querySelectorAll("[data-a]").forEach((b) => {
@@ -358,7 +379,12 @@ async function renderArbiterQueue(view) {
           : `<button class="secondary" data-p="pause" data-j="${j.id}">Pause</button>`}</td></tr>`).join("")}</table>`
       : `<p class="muted">No jobs assigned.</p>`}</div>`;
   view.querySelectorAll("[data-d]").forEach((b) => {
-    b.onclick = () => act(() => api("POST", `/arbiter/milestones/${b.dataset.id}/${b.dataset.d}`), b.dataset.d === "release" ? "Released" : "Refunded");
+    b.onclick = () => {
+      const release = b.dataset.d === "release";
+      // Arbiter decisions move money on-chain and cannot be undone, so ask first.
+      if (!confirm(release ? "Release this payment to the freelancer? This cannot be undone." : "Refund this payment to the client? This cannot be undone.")) return;
+      act(() => api("POST", `/arbiter/milestones/${b.dataset.id}/${b.dataset.d}`), release ? "Released" : "Refunded");
+    };
   });
   view.querySelectorAll("[data-p]").forEach((b) => {
     b.onclick = () => act(() => api("POST", `/arbiter/jobs/${b.dataset.j}/${b.dataset.p}`), b.dataset.p === "pause" ? "Contract paused" : "Contract unpaused");

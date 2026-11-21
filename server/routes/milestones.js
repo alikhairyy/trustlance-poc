@@ -141,20 +141,14 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
         return res.status(400).json({ error: "The deliverable must be a web link starting with http:// or https://" });
       }
       if (String(note || "").length > 2000) return res.status(400).json({ error: "The note is limited to 2000 characters" });
-      let txHash;
-      try {
-        ({ txHash } = await chain.submit(ctx.job.escrow_address, user(req.user.id), ctx.m.chain_index));
-      } catch (err) {
-        return chainError(res, err);
+      const before = await chain.readMilestone(ctx.job.escrow_address, ctx.m.chain_index);
+      if (before.status !== "funded") {
+        return res.status(409).json({ error: "The milestone is not in the right state for this action", contract_error: "WrongStatus" });
       }
-      db.prepare("UPDATE milestones SET deliverable_url = ?, submission_note = ? WHERE id = ?").run(
-        deliverable_url,
-        note || "",
-        ctx.m.id
-      );
-      logEvent(ctx.m.id, req.user.id, "submitted", deliverable_url, txHash);
 
-      // FR9: score the payout wallet. FR10: hold the payment on-chain if the risk is high.
+      // FR9: score the payout wallet BEFORE the work is marked submitted on-chain. If the work
+      // were submitted first, the client could approve it while the score is still being computed,
+      // before a high-risk flag lands. Now submit and flag are sent back to back.
       let assessment;
       try {
         assessment = await risk.assessPayout({ caseId: `milestone-${ctx.m.id}`, freelancer: user(req.user.id) });
@@ -169,6 +163,21 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
           auditHash: null,
         };
       }
+
+      let txHash;
+      try {
+        ({ txHash } = await chain.submit(ctx.job.escrow_address, user(req.user.id), ctx.m.chain_index));
+      } catch (err) {
+        return chainError(res, err);
+      }
+      db.prepare("UPDATE milestones SET deliverable_url = ?, submission_note = ? WHERE id = ?").run(
+        deliverable_url,
+        note || "",
+        ctx.m.id
+      );
+      logEvent(ctx.m.id, req.user.id, "submitted", deliverable_url, txHash);
+
+      // FR10: hold the payment on-chain if the risk is high.
       db.prepare(
         `INSERT INTO risk_assessments (milestone_id, score, band, action, reason, model_version, audit_hash)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -186,17 +195,34 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
     })
   );
 
-  // A job is completed once every milestone is settled (cancelled ones are ignored).
+  // Open = not yet settled. Cancelled milestones are ignored.
+  const openMilestones = (jobId) =>
+    db.prepare("SELECT COUNT(*) AS n FROM milestones WHERE job_id = ? AND status NOT IN ('released', 'refunded', 'cancelled')").get(jobId).n;
+
+  // A job completes by itself only when nothing is open AND the whole budget has been paid out.
+  // Otherwise (for example after milestone 1 of 2) it stays in progress, so the client can add the
+  // next milestone, or close the job early with POST /jobs/:id/complete.
   async function finishIfDone(job) {
-    const counts = db
-      .prepare(
-        `SELECT SUM(status NOT IN ('released', 'refunded', 'cancelled')) AS open,
-                SUM(status IN ('released', 'refunded')) AS settled
-         FROM milestones WHERE job_id = ?`
-      )
-      .get(job.id);
-    if (!counts.open && counts.settled > 0) db.prepare("UPDATE jobs SET status = 'completed' WHERE id = ?").run(job.id);
+    if (openMilestones(job.id) > 0) return;
+    const paid = db
+      .prepare("SELECT amount_eth FROM milestones WHERE job_id = ? AND status = 'released'")
+      .all(job.id)
+      .reduce((sum, row) => sum + toWei(row.amount_eth), 0n);
+    if (paid >= toWei(job.budget_eth)) db.prepare("UPDATE jobs SET status = 'completed' WHERE id = ?").run(job.id);
   }
+
+  // The client closes the job when the work is finished, even if not all of the budget was used.
+  router.post("/jobs/:id/complete", auth.requireRole("client"), (req, res) => {
+    const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(req.params.id);
+    if (!job || job.client_id !== req.user.id) return res.status(404).json({ error: "Job not found" });
+    if (job.status !== "in_progress") return res.status(409).json({ error: "Only a job in progress can be closed" });
+    if (openMilestones(job.id) > 0) {
+      return res.status(409).json({ error: "Settle or cancel every open milestone before closing the job" });
+    }
+    db.prepare("UPDATE jobs SET status = 'completed' WHERE id = ?").run(job.id);
+    notifications.notify(job.freelancer_id, `The client closed the job "${job.title}"`);
+    res.json(db.prepare("SELECT * FROM jobs WHERE id = ?").get(job.id));
+  });
 
   // The client can cancel a milestone that was never funded, so it does not block the job from finishing.
   // Nothing was paid into the contract for it, so this only changes the platform's records.

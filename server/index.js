@@ -18,6 +18,7 @@ async function main() {
   const db = await openDatabase(process.env.DB_PATH || ":memory:");
   const chain = makeChain(ethers);
   const risk = makeRiskService();
+  risk.warmUp(); // load the AI model now, so the first work submission does not wait for it
   const app = createApp({ db, chain, risk, jwtSecret: process.env.JWT_SECRET || crypto.randomBytes(32).toString("hex") });
 
   if (process.env.SEED !== "0") await seedDemo(db, chain);

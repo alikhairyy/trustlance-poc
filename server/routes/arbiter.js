@@ -5,7 +5,9 @@ const { wrap } = require("./util");
 module.exports = function arbiterRoutes({ db, chain, auth, notifications, milestoneHelpers }) {
   const { sync, logEvent, chainError, finishIfDone } = milestoneHelpers;
   const router = express.Router();
-  router.use(auth.requireAuth, auth.requireRole("arbiter"));
+  // Only /api/arbiter/... routes need the arbiter role. (Applied to every path, this check
+  // also answered unknown routes with "Only arbiter can do this" instead of "not found".)
+  router.use("/arbiter", auth.requireAuth, auth.requireRole("arbiter"));
 
   const me = (req) => db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
 

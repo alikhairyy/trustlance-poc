@@ -129,6 +129,11 @@ describe("Trustlance API", function () {
       expect(ok.body.status).to.equal("released");
       const detail = (await call("GET", `/api/milestones/${m.id}`, null, t.client)).body;
       expect(detail.history.map((h) => h.event)).to.include.members(["funded", "submitted", "risk_scored", "approved_released"]);
+      // Only 0.5 of the 1 ETH budget is paid, so the job stays open for the next milestone
+      // until the client closes it.
+      const jobId = detail.job.id;
+      expect((await call("GET", `/api/jobs/${jobId}`, null, t.client)).body.status).to.equal("in_progress");
+      expect((await call("POST", `/api/jobs/${jobId}/complete`, null, t.client)).body.status).to.equal("completed");
     });
 
     it("high risk: flag goes on-chain, approval is blocked, freelancer appeals, arbiter releases", async function () {
