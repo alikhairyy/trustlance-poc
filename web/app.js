@@ -385,7 +385,15 @@ function renderLogin(view) {
 }
 
 async function renderClientHome(view) {
-  const jobs = await api("GET", "/jobs?mine=1");
+  const [jobs, freelancers] = await Promise.all([
+    api("GET", "/jobs?mine=1"),
+    api("GET", "/public/freelancers").catch(() => []),
+  ]);
+  // Recommended: freelancers with the most completed jobs first, then the fullest portfolios.
+  const recommended = freelancers
+    .filter((f) => f.portfolio_count > 0 || f.packages > 0)
+    .sort((a, b) => b.completed_jobs - a.completed_jobs || b.portfolio_count - a.portfolio_count)
+    .slice(0, 3);
   view.innerHTML = `
     <h1>My jobs</h1><p class="sub">Post a job and accept a proposal, or <a href="#/freelancers">buy a package from a freelancer</a>. Then pay milestone by milestone.</p>
     <div class="grid">
@@ -405,7 +413,12 @@ async function renderClientHome(view) {
           ${jobs.map((j) => `<tr><td><a href="#/job/${j.id}">${esc(j.title)}</a></td><td>${esc(j.budget_eth)} ETH</td><td>${pill(j.status)}</td></tr>`).join("")}
         </table>` : `<p class="muted">No jobs yet.</p>`}
       </div>
-    </div>`;
+    </div>
+    ${recommended.length ? `<section style="margin-top:12px">
+      <div class="section-head"><h2 class="section-title">Recommended freelancers</h2><a href="#/freelancers">See all freelancers →</a></div>
+      <p class="sub">Open a profile to see their portfolio and buy one of their packages.</p>
+      <div class="fl-grid">${recommended.map(freelancerCard).join("")}</div>
+    </section>` : ""}`;
   $("#jobForm").onsubmit = (e) => { e.preventDefault(); act(() => api("POST", "/jobs", formData(e.target)), "Job posted"); };
 }
 
