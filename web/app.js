@@ -11,6 +11,52 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const webLink = (url) => (/^https?:\/\//i.test(String(url ?? "").trim())
   ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(url)}</a>`
   : esc(url));
+// ---------- file attachments ----------
+const MAX_FILE = 10 * 1024 * 1024;
+const ALLOWED_FILES = ".pdf,.png,.jpg,.jpeg,.gif,.webp,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
+const fileSize = (b) => (b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1048576).toFixed(1)} MB`);
+
+// Sends the file's bytes to the server; returns the stored attachment.
+async function uploadFile(jobId, file, milestoneId) {
+  if (file.size > MAX_FILE) throw new Error(`"${file.name}" is larger than 10 MB`);
+  const qs = new URLSearchParams({ name: file.name, ...(milestoneId ? { milestone_id: milestoneId } : {}) });
+  const res = await fetch(`/api/jobs/${jobId}/attachments?${qs}`, {
+    method: "POST",
+    headers: { "content-type": "application/octet-stream", authorization: "Bearer " + state.token },
+    body: file,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+  return data;
+}
+
+// Downloads need the login token, so they go through fetch and a temporary link.
+async function downloadFile(id, name) {
+  try {
+    const res = await fetch(`/api/attachments/${id}`, { headers: { authorization: "Bearer " + state.token } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Download failed");
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement("a"), { href: url, download: name });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+const fileChip = (id, name, size) =>
+  `<button type="button" class="file-chip" data-dl="${id}" data-name="${esc(name)}" title="Download">📎 ${esc(name)} <small>${fileSize(size)}</small></button>`;
+
+function wireDownloads(root) {
+  root.querySelectorAll("[data-dl]").forEach((b) => {
+    if (b._wired) return;
+    b._wired = true;
+    b.onclick = () => downloadFile(b.dataset.dl, b.dataset.name);
+  });
+}
+
 const pill = (text, cls = text) => `<span class="pill ${esc(cls)}">${esc(String(text).replace(/_/g, " "))}</span>`;
 
 function toast(msg, isError = false) {
@@ -82,10 +128,68 @@ function renderChrome() {
   $("#nav").innerHTML = (state.user ? NAV[state.user.role] : VISITOR_NAV)
     .map(([h, l]) => `<a href="${h}" class="${route === h ? "active" : ""}">${l}</a>`).join("");
   $("#who").innerHTML = state.user
-    ? `${esc(state.user.full_name)} ${pill(state.user.role)} <button id="logout">Log out</button>`
+    ? `<div class="bell-wrap">
+         <button id="bell" class="bell" aria-label="Notifications" title="Notifications">
+           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>
+           <span id="bellCount" class="bell-count hidden"></span>
+         </button>
+         <div id="bellPanel" class="bell-panel hidden"></div>
+       </div>
+       ${esc(state.user.full_name)} ${pill(state.user.role)} <button id="logout">Log out</button>`
     : `<a class="nav-cta" href="#/login">Get started</a>`;
-  if (state.user) $("#logout").onclick = logout;
+  if (state.user) {
+    $("#logout").onclick = logout;
+    $("#bell").onclick = (e) => { e.stopPropagation(); toggleBell(); };
+    refreshBell();
+  }
 }
+
+// ---------- notifications (the bell) ----------
+// The unread count is checked every 15 seconds; the list loads when the bell is opened.
+async function refreshBell() {
+  if (!state.user) return;
+  try {
+    const { count } = await api("GET", "/users/me/notifications/unread");
+    const badge = $("#bellCount");
+    if (!badge) return;
+    badge.textContent = count > 9 ? "9+" : String(count);
+    badge.classList.toggle("hidden", count === 0);
+  } catch { /* offline or logged out: try again next time */ }
+}
+clearInterval(state.bellTimer);
+state.bellTimer = setInterval(refreshBell, 15000);
+
+async function toggleBell() {
+  const panel = $("#bellPanel");
+  if (!panel.classList.contains("hidden")) { panel.classList.add("hidden"); return; }
+  panel.classList.remove("hidden");
+  panel.innerHTML = `<p class="muted bell-empty">Loading…</p>`;
+  const items = await api("GET", "/users/me/notifications?limit=15").catch(() => []);
+  panel.innerHTML = `
+    <div class="bell-head"><strong>Notifications</strong>${items.some((n) => !n.is_read) ? `<button class="link-btn" id="bellAll">Mark all as read</button>` : ""}</div>
+    ${items.length ? items.map((n) => `
+      <a class="bell-item ${n.is_read ? "" : "unread"}" href="${esc(n.link || "#/")}" data-n="${n.id}">
+        <span>${esc(n.message)}</span>
+        <small>${esc(new Date(String(n.created_at).replace(" ", "T") + "Z").toLocaleString())}</small>
+      </a>`).join("") : `<p class="muted bell-empty">Nothing yet. You'll see payments, messages and reviews here.</p>`}`;
+  panel.querySelectorAll("[data-n]").forEach((a) => {
+    a.onclick = () => {
+      api("POST", "/users/me/notifications/read", { ids: [Number(a.dataset.n)] }).then(refreshBell).catch(() => {});
+      panel.classList.add("hidden");
+    };
+  });
+  const all = $("#bellAll");
+  if (all) all.onclick = async (e) => {
+    e.stopPropagation();
+    await api("POST", "/users/me/notifications/read", {});
+    panel.classList.add("hidden");
+    refreshBell();
+  };
+}
+document.addEventListener("click", (e) => {
+  const panel = $("#bellPanel");
+  if (panel && !panel.classList.contains("hidden") && !e.target.closest(".bell-wrap")) panel.classList.add("hidden");
+});
 
 async function render() {
   if (state.token && !state.user) {
@@ -533,16 +637,34 @@ function startChat(jobId) {
     list.innerHTML = msgs.length
       ? msgs.map((m) => `<div class="msg ${m.sender_id === state.user.id ? "mine" : ""}">
           <div class="msg-meta">${esc(m.sender_name)} · ${esc(new Date(m.created_at.replace(" ", "T") + "Z").toLocaleString())}</div>
-          <div class="msg-body">${esc(m.body)}</div></div>`).join("")
+          ${m.body ? `<div class="msg-body">${esc(m.body)}</div>` : ""}
+          ${m.attachment_id ? `<div>${fileChip(m.attachment_id, m.attachment_name, m.attachment_size)}</div>` : ""}</div>`).join("")
       : `<p class="muted">No messages yet. Say hello and agree on the details.</p>`;
     list.scrollTop = list.scrollHeight;
+    wireDownloads(list);
   };
   load();
   state.chatTimer = setInterval(load, 4000);
   const form = $("#chatForm");
+  // The paperclip: upload the file to the job, then send it as a message.
+  const picker = $("#chatFile");
+  if (picker) picker.onchange = async () => {
+    const file = picker.files[0];
+    picker.value = "";
+    if (!file) return;
+    toast(`Sending ${file.name}…`);
+    try {
+      const a = await uploadFile(jobId, file);
+      await api("POST", `/jobs/${jobId}/messages`, { attachment_id: a.id });
+      toast("File sent");
+      await load();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
   if (form) form.onsubmit = async (e) => {
     e.preventDefault();
-    const input = form.querySelector("input");
+    const input = form.querySelector("input[name=body]");
     const body = input.value.trim();
     if (!body) return;
     input.disabled = true;
@@ -571,6 +693,8 @@ async function renderJob(view, id) {
   const reviews = job.status === "completed" && (isParty || me === job.arbiter_id) ? await api("GET", `/jobs/${id}/reviews`) : [];
   const canReview = job.status === "completed" && isParty && !reviews.some((r) => r.reviewer_id === me);
   const stars = (n) => "★".repeat(n) + "☆".repeat(5 - n);
+  // Either side can attach files to a milestone that is still open, while the job is in progress.
+  const canAttach = (m) => isParty && job.status === "in_progress" && ["pending", "funded", "submitted", "disputed"].includes(m.status);
 
   const milestoneCard = (m, d) => {
     const buttons = [];
@@ -586,7 +710,7 @@ async function renderJob(view, id) {
       buttons.push(`<button class="secondary" data-a="dispute" data-id="${m.id}">Dispute</button>`);
     }
     if (role === "freelancer" && m.status === "funded") {
-      buttons.push(`<input placeholder="Link to your work" id="url-${m.id}" style="max-width:320px" /><button data-a="submit" data-id="${m.id}">Submit work</button>`);
+      buttons.push(`<input placeholder="Link to your work (optional if you attach files)" id="url-${m.id}" style="max-width:360px" /><button data-a="submit" data-id="${m.id}">Submit work</button>`);
     }
     if (role === "freelancer" && m.risk_flagged && !m.appealed && ["funded", "submitted"].includes(m.status)) {
       buttons.push(`<input placeholder="Why the flag is wrong" id="note-${m.id}" style="max-width:320px" /><button class="secondary" data-a="appeal" data-id="${m.id}">Appeal flag</button>`);
@@ -598,6 +722,10 @@ async function renderJob(view, id) {
       <div class="row spread"><h2>${esc(m.title)}</h2><div>${esc(m.amount_eth)} ETH ${pill(m.status)} ${m.risk_flagged ? pill("flagged") : ""} ${m.appealed ? pill("appealed") : ""} ${revisions ? pill(`${revisions} ${revisions === 1 ? "revision" : "revisions"}`, "medium") : ""}</div></div>
       ${lastChange && m.status === "funded" ? `<div class="reason warn"><strong>Changes requested:</strong> ${esc(lastChange.detail)}</div>` : ""}
       ${m.deliverable_url ? `<p class="muted">Deliverable: ${webLink(m.deliverable_url)}</p>` : ""}
+      ${d.attachments.length || canAttach(m) ? `<div class="files">
+        ${d.attachments.map((a) => `${fileChip(a.id, a.filename, a.size)}<span class="muted file-by">by ${esc(a.uploader_name)}</span>`).join("")}
+        ${canAttach(m) ? `<label class="secondary small attach-file">Attach files<input type="file" data-up="${m.id}" accept="${ALLOWED_FILES}" multiple hidden /></label>` : ""}
+      </div>` : ""}
       ${riskBlock(m, d)}
       <div class="row">${buttons.join("")}</div>
       <details style="margin-top:10px"><summary class="muted">History</summary><ul class="timeline">
@@ -640,7 +768,9 @@ async function renderJob(view, id) {
       <h2>Messages</h2>
       ${!isParty ? `<p class="muted">You can read this conversation as the job's arbiter.</p>` : ""}
       <div class="chat-list" id="chatList"><p class="muted">Loading…</p></div>
-      ${isParty ? `<form id="chatForm" class="chat-form"><input name="body" placeholder="Write a message" maxlength="2000" autocomplete="off" required /><button>Send</button></form>` : ""}
+      ${isParty ? `<form id="chatForm" class="chat-form">
+        ${job.status === "in_progress" ? `<label class="attach-btn" title="Send a file (max 10 MB)">📎<input type="file" id="chatFile" accept="${ALLOWED_FILES}" hidden /></label>` : ""}
+        <input name="body" placeholder="Write a message" maxlength="2000" autocomplete="off" required /><button>Send</button></form>` : ""}
     </div>` : ""}`;
 
   const reviewForm = $("#reviewForm");
@@ -650,6 +780,16 @@ async function renderJob(view, id) {
     act(() => api("POST", `/jobs/${id}/reviews`, { rating: Number(d.rating), comment: d.comment }), "Review posted");
   };
   if (hasChat) startChat(id);
+  wireDownloads(view);
+  view.querySelectorAll("[data-up]").forEach((input) => {
+    input.onchange = () => {
+      const files = [...input.files];
+      if (!files.length) return;
+      act(async () => {
+        for (const f of files) await uploadFile(id, f, input.dataset.up);
+      }, files.length === 1 ? `Attached ${files[0].name}` : `Attached ${files.length} files`);
+    };
+  });
 
   view.querySelectorAll("[data-accept]").forEach((b) => {
     b.onclick = () => act(() => api("POST", `/proposals/${b.dataset.accept}/accept`), "Proposal accepted. Escrow contract deployed.");

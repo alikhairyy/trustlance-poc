@@ -136,11 +136,27 @@ CREATE TABLE IF NOT EXISTS message_reads (
   PRIMARY KEY (job_id, user_id)
 );
 
--- FR16 (stub): in-app notifications.
+-- Files attached to a job: deliverables or briefs on a milestone, or a file sent in the chat.
+-- The file itself is stored on the server's disk (uploads/) under a random name.
+CREATE TABLE IF NOT EXISTS attachments (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id           INTEGER NOT NULL REFERENCES jobs(id),
+  milestone_id     INTEGER REFERENCES milestones(id),  -- set for milestone files
+  message_id       INTEGER REFERENCES messages(id),    -- set once sent in the chat
+  uploader_id      INTEGER NOT NULL REFERENCES users(id),
+  filename         TEXT    NOT NULL,                    -- the name shown to people
+  mime             TEXT    NOT NULL,
+  size             INTEGER NOT NULL,                    -- bytes
+  stored_name      TEXT    NOT NULL UNIQUE,             -- random name on disk
+  created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- FR16: in-app notifications, shown in the bell menu.
 CREATE TABLE IF NOT EXISTS notifications (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id          INTEGER NOT NULL REFERENCES users(id),
   message          TEXT    NOT NULL,
+  link             TEXT    NOT NULL DEFAULT '',          -- page the notification is about, e.g. #/job/3
   is_read          INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
 );

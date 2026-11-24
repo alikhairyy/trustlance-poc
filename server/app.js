@@ -5,7 +5,8 @@ const express = require("express");
 const { makeAuth } = require("./middleware/auth");
 const { makeNotifications } = require("./services/notifications");
 
-function createApp({ db, chain, risk, jwtSecret }) {
+// uploadDir: where attached files are kept (tests pass a temporary folder).
+function createApp({ db, chain, risk, jwtSecret, uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, "..", "uploads") }) {
   const app = express();
   app.use(express.json({ limit: "100kb" }));
 
@@ -19,6 +20,7 @@ function createApp({ db, chain, risk, jwtSecret }) {
   app.use("/api", require("./routes/auth")(deps));
   // Before the jobs router, whose login check covers every path it sees: the public pages need no login.
   app.use("/api", require("./routes/market")({ ...deps, milestoneHelpers: milestones }));
+  app.use("/api", require("./routes/attachments")({ ...deps, uploadDir }));
   app.use("/api", require("./routes/jobs")(deps));
   app.use("/api", milestones.router);
   app.use("/api", require("./routes/arbiter")({ ...deps, milestoneHelpers: milestones }));

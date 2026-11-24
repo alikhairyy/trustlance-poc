@@ -39,8 +39,8 @@ module.exports = function arbiterRoutes({ db, chain, auth, notifications, milest
         const { txHash } = await fn(job.escrow_address, me(req), m.chain_index);
         const note = (req.body && req.body.note) || "";
         logEvent(m.id, req.user.id, kind === "release" ? "arbiter_released" : "arbiter_refunded", note, txHash);
-        notifications.notify(job.client_id, `Arbiter decision on "${m.title}": ${kind}`);
-        notifications.notify(job.freelancer_id, `Arbiter decision on "${m.title}": ${kind}`);
+        notifications.notify(job.client_id, `Arbiter decision on "${m.title}": ${kind}`, `#/job/${job.id}`);
+        notifications.notify(job.freelancer_id, `Arbiter decision on "${m.title}": ${kind}`, `#/job/${job.id}`);
         const updated = await sync(m, job);
         await finishIfDone(job);
         res.json(updated);

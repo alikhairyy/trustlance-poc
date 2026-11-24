@@ -86,8 +86,27 @@ module.exports = function authRoutes({ db, chain, auth }) {
     res.json(publicUser(db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id)));
   });
 
+  // Newest first, at most 50 (or ?limit=).
   router.get("/users/me/notifications", auth.requireAuth, (req, res) => {
-    res.json(db.prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC").all(req.user.id));
+    const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+    res.json(db.prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT ?").all(req.user.id, limit));
+  });
+
+  // The bell's badge: how many are unread.
+  router.get("/users/me/notifications/unread", auth.requireAuth, (req, res) => {
+    res.json({ count: db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND is_read = 0").get(req.user.id).n });
+  });
+
+  // Mark some ({ ids: [...] }) or all (no ids) of the user's notifications as read.
+  router.post("/users/me/notifications/read", auth.requireAuth, (req, res) => {
+    const ids = req.body && Array.isArray(req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : null;
+    if (ids && ids.length) {
+      const mark = db.prepare("UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?");
+      for (const id of ids.slice(0, 200)) mark.run(id, req.user.id);
+    } else {
+      db.prepare("UPDATE notifications SET is_read = 1 WHERE user_id = ?").run(req.user.id);
+    }
+    res.json({ count: db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND is_read = 0").get(req.user.id).n });
   });
 
   return router;

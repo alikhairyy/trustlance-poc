@@ -81,7 +81,7 @@ module.exports = function jobRoutes({ db, chain, auth, notifications }) {
     const info = db
       .prepare("INSERT INTO proposals (job_id, freelancer_id, cover_letter, price_eth) VALUES (?, ?, ?, ?)")
       .run(job.id, req.user.id, cover_letter, price);
-    notifications.notify(job.client_id, `New proposal on "${job.title}"`);
+    notifications.notify(job.client_id, `New proposal on "${job.title}"`, `#/job/${job.id}`);
     res.status(201).json(db.prepare("SELECT * FROM proposals WHERE id = ?").get(info.lastInsertRowid));
   });
 
@@ -125,8 +125,8 @@ module.exports = function jobRoutes({ db, chain, auth, notifications }) {
           "UPDATE jobs SET status = 'in_progress', freelancer_id = ?, arbiter_id = ?, escrow_address = ? WHERE id = ?"
         ).run(freelancer.id, arbiter.id, address, job.id);
       })();
-      notifications.notify(freelancer.id, `Your proposal for "${job.title}" was accepted`);
-      for (const o of others) notifications.notify(o.freelancer_id, `Another freelancer was chosen for "${job.title}"`);
+      notifications.notify(freelancer.id, `Your proposal for "${job.title}" was accepted`, `#/job/${job.id}`);
+      for (const o of others) notifications.notify(o.freelancer_id, `Another freelancer was chosen for "${job.title}"`, `#/job/${job.id}`);
       res.json({ ...getJob(job.id), deploy_tx: txHash });
     })
   );
@@ -165,7 +165,7 @@ module.exports = function jobRoutes({ db, chain, auth, notifications }) {
     const info = db
       .prepare("INSERT INTO reviews (job_id, reviewer_id, reviewee_id, rating, comment) VALUES (?, ?, ?, ?, ?)")
       .run(job.id, me, reviewee, rating, comment);
-    notifications.notify(reviewee, `You received a ${rating}-star review for "${job.title}"`);
+    notifications.notify(reviewee, `You received a ${rating}-star review for "${job.title}"`, `#/job/${job.id}`);
     res.status(201).json(db.prepare("SELECT * FROM reviews WHERE id = ?").get(info.lastInsertRowid));
   });
 
@@ -191,8 +191,10 @@ module.exports = function jobRoutes({ db, chain, auth, notifications }) {
     if (!messageAccess(job, req.user.id)) return res.status(404).json({ error: "Job not found" });
     const rows = db
       .prepare(
-        `SELECT m.id, m.sender_id, m.body, m.created_at, u.full_name AS sender_name, u.role AS sender_role
-         FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.job_id = ? ORDER BY m.id`
+        `SELECT m.id, m.sender_id, m.body, m.created_at, u.full_name AS sender_name, u.role AS sender_role,
+                a.id AS attachment_id, a.filename AS attachment_name, a.size AS attachment_size
+         FROM messages m JOIN users u ON u.id = m.sender_id LEFT JOIN attachments a ON a.message_id = m.id
+         WHERE m.job_id = ? ORDER BY m.id`
       )
       .all(job.id);
     // Reading the thread marks it as seen.
@@ -209,11 +211,21 @@ module.exports = function jobRoutes({ db, chain, auth, notifications }) {
     const access = messageAccess(job, req.user.id);
     if (!access) return res.status(404).json({ error: "Job not found" });
     if (access !== "write") return res.status(403).json({ error: "The arbiter can read this conversation but not write in it" });
-    const body = cleanText(req.body && req.body.body, 2000);
-    if (!body) return res.status(400).json({ error: "Write a message (max 2000 characters)" });
-    const info = db.prepare("INSERT INTO messages (job_id, sender_id, body) VALUES (?, ?, ?)").run(job.id, req.user.id, body);
+    // A message is text, a file the sender uploaded to this job first (attachment_id), or both.
+    const text = String((req.body && req.body.body) || "").trim();
+    if (text.length > 2000) return res.status(400).json({ error: "A message is limited to 2000 characters" });
+    let attachment = null;
+    if (req.body && req.body.attachment_id) {
+      attachment = db
+        .prepare("SELECT * FROM attachments WHERE id = ? AND job_id = ? AND uploader_id = ? AND milestone_id IS NULL AND message_id IS NULL")
+        .get(req.body.attachment_id, job.id, req.user.id);
+      if (!attachment) return res.status(404).json({ error: "File not found, or already sent" });
+    }
+    if (!text && !attachment) return res.status(400).json({ error: "Write a message or attach a file" });
+    const info = db.prepare("INSERT INTO messages (job_id, sender_id, body) VALUES (?, ?, ?)").run(job.id, req.user.id, text);
+    if (attachment) db.prepare("UPDATE attachments SET message_id = ? WHERE id = ?").run(info.lastInsertRowid, attachment.id);
     const other = req.user.id === job.client_id ? job.freelancer_id : job.client_id;
-    notifications.notify(other, `New message on "${job.title}"`);
+    notifications.notify(other, `New message on "${job.title}"`, `#/job/${job.id}`);
     res.status(201).json(db.prepare("SELECT * FROM messages WHERE id = ?").get(info.lastInsertRowid));
   });
 

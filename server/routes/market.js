@@ -210,7 +210,7 @@ module.exports = function marketRoutes({ db, chain, auth, notifications, milesto
           .run(jobId, chainIndex, `Case ${i + 1} of ${pkg.cases}`, amount);
         logEvent(m.lastInsertRowid, client.id, "created", `${amount} ETH (package "${pkg.title}")`, txHash);
       }
-      notifications.notify(freelancer.id, `${client.full_name} bought your package "${pkg.title}"`);
+      notifications.notify(freelancer.id, `${client.full_name} bought your package "${pkg.title}"`, `#/job/${jobId}`);
       res.status(201).json(db.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId));
     })
   );

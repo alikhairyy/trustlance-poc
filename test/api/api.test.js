@@ -48,7 +48,8 @@ describe("Trustlance API", function () {
     const db = await openDatabase(":memory:");
     const chain = makeChain(ethers);
     await seedDemo(db, chain);
-    const app = createApp({ db, chain, risk: fakeRisk, jwtSecret: "test-secret" });
+    const uploadDir = require("fs").mkdtempSync(require("path").join(require("os").tmpdir(), "trustlance-uploads-"));
+    const app = createApp({ db, chain, risk: fakeRisk, jwtSecret: "test-secret", uploadDir });
     server = app.listen(0);
     base = `http://127.0.0.1:${server.address().port}`;
     t = { client: await login("client@demo.com"), arbiter: await login("arbiter@demo.com") };
@@ -278,6 +279,61 @@ describe("Trustlance API", function () {
       expect((await call("POST", `/api/jobs/${job.id}/messages`, { body: "x" }, t.arbiter)).status).to.equal(403);
       expect((await call("GET", `/api/jobs/${job.id}/messages`, null, await login("risky@demo.com"))).status).to.equal(404);
       expect((await call("POST", `/api/jobs/${job.id}/messages`, { body: "   " }, t.client)).status).to.equal(400);
+    });
+
+    it("notifications: linked to the job, counted as unread, marked read", async function () {
+      const { job } = await fundedMilestone(t, "freelancer@demo.com", "0.1");
+      const fl = await login("freelancer@demo.com");
+      const list = (await call("GET", "/api/users/me/notifications?limit=5", null, fl)).body;
+      const funded = list.find((n) => n.message.includes("is funded"));
+      expect(funded.link).to.equal(`#/job/${job.id}`);
+      const before = (await call("GET", "/api/users/me/notifications/unread", null, fl)).body.count;
+      expect(before).to.be.greaterThan(0);
+      const one = await call("POST", "/api/users/me/notifications/read", { ids: [funded.id] }, fl);
+      expect(one.body.count).to.equal(before - 1);
+      expect((await call("POST", "/api/users/me/notifications/read", {}, fl)).body.count).to.equal(0);
+      // Someone else's notification ids are ignored.
+      expect((await call("GET", "/api/users/me/notifications/unread", null, t.client)).body.count).to.be.greaterThan(0);
+    });
+
+    it("attachments: upload, download, limits, access, chat files and file-only submissions", async function () {
+      const { job, m, fl } = await fundedMilestone(t, "freelancer@demo.com", "0.1");
+      const upload = (name, bytes, token, milestoneId) =>
+        fetch(`${base}/api/jobs/${job.id}/attachments?name=${encodeURIComponent(name)}${milestoneId ? `&milestone_id=${milestoneId}` : ""}`, {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream", authorization: `Bearer ${token}` },
+          body: bytes,
+        }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+      // Submitting needs a link or a file.
+      expect((await call("POST", `/api/milestones/${m.id}/submit`, {}, fl)).status).to.equal(400);
+      expect((await upload("page.html", Buffer.from("<script>x</script>"), fl, m.id)).status).to.equal(400); // type not allowed
+      expect((await upload("big.pdf", Buffer.alloc(10 * 1024 * 1024 + 1), fl, m.id)).status).to.equal(413);
+      expect((await upload("x.pdf", Buffer.from("x"), await login("risky@demo.com"), m.id)).status).to.equal(404); // not on the job
+      const pdf = await upload("../../report.pdf", Buffer.from("%PDF-1.4 test"), fl, m.id);
+      expect(pdf.status).to.equal(201);
+      expect(pdf.body.filename).to.equal("report.pdf"); // no folders in names
+      expect(pdf.body).to.not.have.property("stored_name");
+      const sub = await call("POST", `/api/milestones/${m.id}/submit`, {}, fl); // files only, no link
+      expect(sub.body.milestone.status).to.equal("submitted");
+
+      // Download: the job's client and arbiter can; others cannot. Always as a download.
+      const dl = await fetch(`${base}/api/attachments/${pdf.body.id}`, { headers: { authorization: `Bearer ${t.client}` } });
+      expect(dl.status).to.equal(200);
+      expect(dl.headers.get("content-disposition")).to.match(/^attachment;/);
+      expect(dl.headers.get("x-content-type-options")).to.equal("nosniff");
+      expect(Buffer.from(await dl.arrayBuffer()).toString()).to.equal("%PDF-1.4 test");
+      expect((await fetch(`${base}/api/attachments/${pdf.body.id}`, { headers: { authorization: `Bearer ${t.arbiter}` } })).status).to.equal(200);
+      expect((await fetch(`${base}/api/attachments/${pdf.body.id}`, { headers: { authorization: `Bearer ${await login("risky@demo.com")}` } })).status).to.equal(404);
+      const detail = (await call("GET", `/api/milestones/${m.id}`, null, t.client)).body;
+      expect(detail.attachments.map((a) => a.filename)).to.deep.equal(["report.pdf"]);
+
+      // A file sent in the chat, once only.
+      const img = await upload("mockup.png", Buffer.from("png"), t.client);
+      expect((await call("POST", `/api/jobs/${job.id}/messages`, { attachment_id: img.body.id }, t.client)).status).to.equal(201);
+      expect((await call("POST", `/api/jobs/${job.id}/messages`, { attachment_id: img.body.id }, t.client)).status).to.equal(404);
+      const msgs = (await call("GET", `/api/jobs/${job.id}/messages`, null, fl)).body;
+      expect(msgs[msgs.length - 1].attachment_name).to.equal("mockup.png");
     });
 
     it("search: freelancers by words, price and rating; jobs by words", async function () {

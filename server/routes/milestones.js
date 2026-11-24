@@ -26,6 +26,15 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
     return db.prepare("SELECT * FROM milestones WHERE id = ?").get(m.id);
   }
 
+  // Files attached to a milestone, oldest first, with who uploaded them (never the name on disk).
+  const milestoneFiles = (milestoneId) =>
+    db
+      .prepare(
+        `SELECT a.id, a.filename, a.mime, a.size, a.created_at, a.uploader_id, u.full_name AS uploader_name
+         FROM attachments a JOIN users u ON u.id = a.uploader_id WHERE a.milestone_id = ? ORDER BY a.id`
+      )
+      .all(milestoneId);
+
   // Loads milestone + job and checks the caller has the right role on this job.
   function load(req, res, role) {
     const m = db.prepare("SELECT * FROM milestones WHERE id = ?").get(req.params.id);
@@ -111,6 +120,7 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
            FROM milestone_events e LEFT JOIN users u ON u.id = e.actor_id WHERE e.milestone_id = ? ORDER BY e.id`
         )
         .all(m.id),
+      attachments: milestoneFiles(m.id),
     });
   });
 
@@ -122,7 +132,7 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
       try {
         const { txHash } = await chain.fund(ctx.job.escrow_address, user(req.user.id), ctx.m.chain_index, ctx.m.amount_eth);
         logEvent(ctx.m.id, req.user.id, "funded", `${ctx.m.amount_eth} ETH locked in escrow`, txHash);
-        notifications.notify(ctx.job.freelancer_id, `Milestone "${ctx.m.title}" is funded. You can start.`);
+        notifications.notify(ctx.job.freelancer_id, `Milestone "${ctx.m.title}" is funded. You can start.`, `#/job/${ctx.job.id}`);
         res.json(await sync(ctx.m, ctx.job));
       } catch (err) {
         chainError(res, err);
@@ -136,9 +146,14 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
       const ctx = load(req, res, "freelancer");
       if (!ctx) return;
       const { note } = req.body || {};
+      // The deliverable is a link, attached files, or both.
       const deliverable_url = String((req.body && req.body.deliverable_url) || "").trim();
-      if (!isWebUrl(deliverable_url) || deliverable_url.length > 2000) {
-        return res.status(400).json({ error: "The deliverable must be a web link starting with http:// or https://" });
+      const myFiles = milestoneFiles(ctx.m.id).filter((a) => a.uploader_id === req.user.id).length;
+      if (deliverable_url && (!isWebUrl(deliverable_url) || deliverable_url.length > 2000)) {
+        return res.status(400).json({ error: "The deliverable link must start with http:// or https://" });
+      }
+      if (!deliverable_url && !myFiles) {
+        return res.status(400).json({ error: "Add a link to your work or attach at least one file" });
       }
       if (String(note || "").length > 2000) return res.status(400).json({ error: "The note is limited to 2000 characters" });
       const before = await chain.readMilestone(ctx.job.escrow_address, ctx.m.chain_index);
@@ -175,7 +190,11 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
         note || "",
         ctx.m.id
       );
-      logEvent(ctx.m.id, req.user.id, "submitted", deliverable_url, txHash);
+      logEvent(
+        ctx.m.id, req.user.id, "submitted",
+        [deliverable_url, myFiles ? `${myFiles} attached ${myFiles === 1 ? "file" : "files"}` : ""].filter(Boolean).join(" · "),
+        txHash
+      );
 
       // FR10: hold the payment on-chain if the risk is high.
       db.prepare(
@@ -187,10 +206,10 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
       if (assessment.action === "hold_for_review") {
         const flagged = await chain.flag(ctx.job.escrow_address, ctx.m.chain_index, assessment.reason);
         logEvent(ctx.m.id, null, "risk_flagged", assessment.reason, flagged.txHash);
-        notifications.notify(ctx.job.arbiter_id, `Milestone "${ctx.m.title}" was flagged for review`);
-        notifications.notify(ctx.job.freelancer_id, `Milestone "${ctx.m.title}" is held for review. You can appeal.`);
+        notifications.notify(ctx.job.arbiter_id, `Milestone "${ctx.m.title}" was flagged for review`, `#/job/${ctx.job.id}`);
+        notifications.notify(ctx.job.freelancer_id, `Milestone "${ctx.m.title}" is held for review. You can appeal.`, `#/job/${ctx.job.id}`);
       }
-      notifications.notify(ctx.job.client_id, `Work submitted for "${ctx.m.title}"`);
+      notifications.notify(ctx.job.client_id, `Work submitted for "${ctx.m.title}"`, `#/job/${ctx.job.id}`);
       res.json({ milestone: await sync(ctx.m, ctx.job), risk: assessment });
     })
   );
@@ -220,7 +239,7 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
       return res.status(409).json({ error: "Settle or cancel every open milestone before closing the job" });
     }
     db.prepare("UPDATE jobs SET status = 'completed' WHERE id = ?").run(job.id);
-    notifications.notify(job.freelancer_id, `The client closed the job "${job.title}"`);
+    notifications.notify(job.freelancer_id, `The client closed the job "${job.title}"`, `#/job/${job.id}`);
     res.json(db.prepare("SELECT * FROM jobs WHERE id = ?").get(job.id));
   });
 
@@ -248,7 +267,7 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
       try {
         const { txHash } = await chain.approve(ctx.job.escrow_address, user(req.user.id), ctx.m.chain_index);
         logEvent(ctx.m.id, req.user.id, "approved_released", `${ctx.m.amount_eth} ETH paid to freelancer`, txHash);
-        notifications.notify(ctx.job.freelancer_id, `Payment released for "${ctx.m.title}"`);
+        notifications.notify(ctx.job.freelancer_id, `Payment released for "${ctx.m.title}"`, `#/job/${ctx.job.id}`);
         const m = await sync(ctx.m, ctx.job);
         await finishIfDone(ctx.job);
         res.json(m);
@@ -266,7 +285,7 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
       try {
         const { txHash } = await chain.dispute(ctx.job.escrow_address, user(req.user.id), ctx.m.chain_index);
         logEvent(ctx.m.id, req.user.id, "disputed", (req.body && req.body.reason) || "", txHash);
-        notifications.notify(ctx.job.arbiter_id, `Milestone "${ctx.m.title}" was disputed`);
+        notifications.notify(ctx.job.arbiter_id, `Milestone "${ctx.m.title}" was disputed`, `#/job/${ctx.job.id}`);
         res.json(await sync(ctx.m, ctx.job));
       } catch (err) {
         chainError(res, err);
@@ -286,7 +305,7 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
       try {
         const { txHash } = await chain.requestChanges(ctx.job.escrow_address, user(req.user.id), ctx.m.chain_index);
         logEvent(ctx.m.id, req.user.id, "changes_requested", note, txHash);
-        notifications.notify(ctx.job.freelancer_id, `The client asked for changes on "${ctx.m.title}": ${note}`);
+        notifications.notify(ctx.job.freelancer_id, `The client asked for changes on "${ctx.m.title}": ${note}`, `#/job/${ctx.job.id}`);
         res.json(await sync(ctx.m, ctx.job));
       } catch (err) {
         chainError(res, err);
@@ -304,7 +323,7 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
       try {
         const { txHash } = await chain.appeal(ctx.job.escrow_address, user(req.user.id), ctx.m.chain_index, note);
         logEvent(ctx.m.id, req.user.id, "appealed", note, txHash);
-        notifications.notify(ctx.job.arbiter_id, `The freelancer appealed the flag on "${ctx.m.title}"`);
+        notifications.notify(ctx.job.arbiter_id, `The freelancer appealed the flag on "${ctx.m.title}"`, `#/job/${ctx.job.id}`);
         res.json(await sync(ctx.m, ctx.job));
       } catch (err) {
         chainError(res, err);
