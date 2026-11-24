@@ -183,6 +183,54 @@ describe("Trustlance API", function () {
     });
   });
 
+  describe("portfolios and packages", function () {
+    it("anyone can see a freelancer's public profile, portfolio and packages", async function () {
+      const list = await call("GET", "/api/public/freelancers");
+      expect(list.status).to.equal(200);
+      const omar = list.body.find((f) => f.full_name === "Omar Freelancer");
+      expect(omar.portfolio_count).to.be.greaterThan(0);
+      expect(omar).to.not.have.property("email"); // no private data on public pages
+      const profile = (await call("GET", `/api/public/freelancers/${omar.id}`)).body;
+      expect(profile.portfolio.length).to.equal(omar.portfolio_count);
+      expect(profile.packages.length).to.be.greaterThan(0);
+      expect((await call("GET", "/api/public/freelancers/1")).status).to.equal(404); // user 1 is a client
+    });
+
+    it("a freelancer adds portfolio work and packages; others cannot", async function () {
+      const fl = await login("freelancer@demo.com");
+      const item = await call("POST", "/api/me/portfolio", { title: "Black Friday ads", result: "ROAS 5x", link: "https://example.com/case" }, fl);
+      expect(item.status).to.equal(201);
+      expect((await call("POST", "/api/me/portfolio", { title: "x", link: "javascript:alert(1)" }, fl)).status).to.equal(400);
+      expect((await call("POST", "/api/me/portfolio", { title: "x" }, t.client)).status).to.equal(403);
+      expect((await call("POST", "/api/me/packages", { title: "Bad", cases: 0, price_eth: "1" }, fl)).status).to.equal(400);
+      const pkg = await call("POST", "/api/me/packages", { title: "2 campaigns", cases: 2, price_eth: "0.5" }, fl);
+      expect(pkg.status).to.equal(201);
+      expect((await call("PUT", `/api/me/packages/${pkg.body.id}`, { active: false }, fl)).body.active).to.equal(0);
+      expect((await call("POST", `/api/packages/${pkg.body.id}/buy`, null, t.client)).status).to.equal(404); // hidden
+      const other = await login("risky@demo.com");
+      expect((await call("DELETE", `/api/me/portfolio/${item.body.id}`, null, other)).status).to.equal(404);
+      expect((await call("DELETE", `/api/me/portfolio/${item.body.id}`, null, fl)).status).to.equal(200);
+    });
+
+    it("buying a package creates a job with one escrowed milestone per case", async function () {
+      const fl = await login("freelancer@demo.com");
+      const pkg = (await call("POST", "/api/me/packages", { title: "3 media-buying cases", cases: 3, price_eth: "1" }, fl)).body;
+      expect((await call("POST", `/api/packages/${pkg.id}/buy`, null, fl)).status).to.equal(403); // only clients buy
+      const bought = await call("POST", `/api/packages/${pkg.id}/buy`, null, t.client);
+      expect(bought.status).to.equal(201);
+      const job = (await call("GET", `/api/jobs/${bought.body.id}`, null, t.client)).body;
+      expect(job.status).to.equal("in_progress");
+      expect(job.package_id).to.equal(pkg.id);
+      expect(await ethers.provider.getCode(job.escrow_address)).to.not.equal("0x");
+      expect(job.milestones.map((m) => m.title)).to.deep.equal(["Case 1 of 3", "Case 2 of 3", "Case 3 of 3"]);
+      // 1 ETH over 3 cases: the remainder goes on the last case, so the total is exact.
+      const totalWei = job.milestones.reduce((s, m) => s + ethers.parseEther(m.amount_eth), 0n);
+      expect(totalWei).to.equal(ethers.parseEther("1"));
+      // The cases go through the normal escrow flow.
+      expect((await call("POST", `/api/milestones/${job.milestones[0].id}/fund`, null, t.client)).body.status).to.equal("funded");
+    });
+  });
+
   describe("stubs", function () {
     it("ratings return 501 until FR17 is built", async function () {
       expect((await call("POST", "/api/jobs/1/reviews", { rating: 5 }, t.client)).status).to.equal(501);

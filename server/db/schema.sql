@@ -26,6 +26,32 @@ CREATE TABLE IF NOT EXISTS jobs (
   freelancer_id    INTEGER REFERENCES users(id),
   arbiter_id       INTEGER REFERENCES users(id),
   escrow_address   TEXT,                             -- one MilestoneEscrow contract per job
+  package_id       INTEGER REFERENCES packages(id),  -- set when the job came from buying a freelancer's package
+  created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Public portfolio: work a freelancer shows on their profile page.
+CREATE TABLE IF NOT EXISTS portfolio_items (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  freelancer_id    INTEGER NOT NULL REFERENCES users(id),
+  title            TEXT    NOT NULL,
+  description      TEXT    NOT NULL DEFAULT '',
+  link             TEXT    DEFAULT '',               -- http(s) link to the work, optional
+  result           TEXT    DEFAULT '',               -- the outcome in one line, e.g. "ROAS 4.2x in 30 days"
+  created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Packages: a fixed offer a client can buy directly, e.g. "3 media-buying campaigns for 0.9 ETH".
+-- Buying one creates a job with one escrowed milestone per case.
+CREATE TABLE IF NOT EXISTS packages (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  freelancer_id    INTEGER NOT NULL REFERENCES users(id),
+  title            TEXT    NOT NULL,
+  description      TEXT    NOT NULL DEFAULT '',
+  cases            INTEGER NOT NULL CHECK (cases BETWEEN 1 AND 12),
+  price_eth        TEXT    NOT NULL,                 -- total for all cases
+  delivery_days    INTEGER NOT NULL DEFAULT 30,
+  active           INTEGER NOT NULL DEFAULT 1,
   created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 

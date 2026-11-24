@@ -1,6 +1,6 @@
 // FR3 post jobs, FR4 browse jobs and send proposals, FR5 accept a proposal (deploys escrow).
 const express = require("express");
-const { wrap, cleanEth, cleanText, toWei } = require("./util");
+const { wrap, cleanEth, cleanText, toWei, pickArbiter } = require("./util");
 
 const MAX_BUDGET_WEI = toWei("1000000");
 
@@ -102,13 +102,7 @@ module.exports = function jobRoutes({ db, chain, auth, notifications }) {
       if (job.status !== "open" || proposal.status !== "pending") {
         return res.status(409).json({ error: "This job already has a freelancer" });
       }
-      // The platform assigns an arbiter. For now: the arbiter with the fewest active jobs.
-      const arbiter = db
-        .prepare(
-          `SELECT u.* FROM users u LEFT JOIN jobs j ON j.arbiter_id = u.id AND j.status = 'in_progress'
-           WHERE u.role = 'arbiter' GROUP BY u.id ORDER BY COUNT(j.id), u.id LIMIT 1`
-        )
-        .get();
+      const arbiter = pickArbiter(db);
       if (!arbiter) return res.status(503).json({ error: "No arbiter is available yet" });
       const client = db.prepare("SELECT * FROM users WHERE id = ?").get(job.client_id);
       const freelancer = db.prepare("SELECT * FROM users WHERE id = ?").get(proposal.freelancer_id);

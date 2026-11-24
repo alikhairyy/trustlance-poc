@@ -71,16 +71,16 @@ async function login(email, password) {
 
 // ---------- layout ----------
 const NAV = {
-  client: [["#/", "My jobs"], ["#/profile", "Profile"]],
-  freelancer: [["#/", "Find work"], ["#/mine", "My jobs"], ["#/profile", "Profile"]],
+  client: [["#/", "My jobs"], ["#/freelancers", "Hire a freelancer"], ["#/profile", "Profile"]],
+  freelancer: [["#/", "Find work"], ["#/mine", "My jobs"], ["#/portfolio", "Portfolio & packages"], ["#/profile", "Profile"]],
   arbiter: [["#/", "Review queue"], ["#/profile", "Profile"]],
 };
+const VISITOR_NAV = [["#/", "Home"], ["#/freelancers", "Freelancers"], ["#/login", "Log in"]];
 
 function renderChrome() {
   const route = location.hash || "#/";
-  $("#nav").innerHTML = state.user
-    ? NAV[state.user.role].map(([h, l]) => `<a href="${h}" class="${route === h ? "active" : ""}">${l}</a>`).join("")
-    : `<a href="#/" class="${route === "#/" ? "active" : ""}">Home</a><a href="#/login" class="${route === "#/login" ? "active" : ""}">Log in</a>`;
+  $("#nav").innerHTML = (state.user ? NAV[state.user.role] : VISITOR_NAV)
+    .map(([h, l]) => `<a href="${h}" class="${route === h ? "active" : ""}">${l}</a>`).join("");
   $("#who").innerHTML = state.user
     ? `${esc(state.user.full_name)} ${pill(state.user.role)} <button id="logout">Log out</button>`
     : `<a class="nav-cta" href="#/login">Get started</a>`;
@@ -93,12 +93,22 @@ async function render() {
   }
   renderChrome();
   const view = $("#view");
-  if (!state.user) return (location.hash === "#/login" ? renderLogin : renderLanding)(view);
-
   const route = location.hash || "#/";
+  const userMatch = route.match(/^#\/u\/(\d+)$/);
+  try {
+    // Public pages: open to everyone, logged in or not.
+    if (route === "#/freelancers") return await renderFreelancers(view);
+    if (userMatch) return await renderPublicProfile(view, Number(userMatch[1]));
+    if (!state.user) return route === "#/login" ? renderLogin(view) : await renderLanding(view);
+  } catch (e) {
+    view.innerHTML = `<div class="card">${esc(e.message)}</div>`;
+    return;
+  }
+
   const jobMatch = route.match(/^#\/job\/(\d+)$/);
   try {
     if (route === "#/profile") return await renderProfile(view);
+    if (route === "#/portfolio" && state.user.role === "freelancer") return await renderMyPortfolio(view);
     if (jobMatch) return await renderJob(view, Number(jobMatch[1]));
     if (state.user.role === "client") return await renderClientHome(view);
     if (state.user.role === "freelancer") return route === "#/mine" ? await renderMyJobs(view) : await renderFindWork(view);
@@ -110,53 +120,225 @@ async function render() {
 
 // ---------- screens ----------
 
+// ---------- shared pieces for the marketplace screens ----------
+
+// Initials in a coloured circle, so freelancers have a face without photo uploads.
+function avatar(name, size = "") {
+  const initials = String(name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
+  const hue = [...String(name || "")].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  return `<span class="avatar ${size}" style="background:hsl(${hue} 55% 42%)">${esc(initials)}</span>`;
+}
+
+const skillTags = (skills) => String(skills || "").split(",").map((s) => s.trim()).filter(Boolean)
+  .map((s) => `<span class="tag">${esc(s)}</span>`).join("");
+
+function packageCard(p, { showFreelancer = false, canBuy = false } = {}) {
+  const perCase = Number(p.price_eth) / p.cases;
+  return `<div class="pkg">
+    ${showFreelancer ? `<a class="pkg-by" href="#/u/${p.freelancer_id}">${avatar(p.freelancer_name, "sm")} ${esc(p.freelancer_name)}</a>` : ""}
+    <h3>${esc(p.title)}</h3>
+    <p class="pkg-desc">${esc(p.description)}</p>
+    <ul class="pkg-facts">
+      <li><strong>${p.cases}</strong> ${p.cases === 1 ? "case" : "cases"}, each paid from escrow on delivery</li>
+      <li>Delivered within <strong>${p.delivery_days}</strong> days</li>
+    </ul>
+    <div class="pkg-foot">
+      <div><span class="price">${esc(p.price_eth)} ETH</span><span class="muted"> · ${perCase.toFixed(4).replace(/\.?0+$/, "")} ETH per case</span></div>
+      ${canBuy ? `<button data-buy="${p.id}">Buy package</button>` : showFreelancer ? `<a class="btn small" href="#/u/${p.freelancer_id}">View</a>` : ""}
+    </div>
+  </div>`;
+}
+
+// A client buys a package: the server creates the job, its escrow and one milestone per case.
+function wireBuyButtons(view) {
+  view.querySelectorAll("[data-buy]").forEach((b) => {
+    b.onclick = () => {
+      if (!state.user) { location.hash = "#/login"; return; }
+      if (!confirm("Buy this package? A job is created with one milestone per case. You fund each case before the work starts.")) return;
+      b.disabled = true;
+      act(async () => {
+        const job = await api("POST", `/packages/${b.dataset.buy}/buy`);
+        location.hash = `#/job/${job.id}`;
+      }, "Package bought. Fund the first case to start.");
+    };
+  });
+}
+
 // Public landing page: what Trustlance does, for visitors who are not logged in.
-function renderLanding(view) {
+async function renderLanding(view) {
+  const [packages, freelancers] = await Promise.all([
+    api("GET", "/public/packages").catch(() => []),
+    api("GET", "/public/freelancers").catch(() => []),
+  ]);
   view.innerHTML = `
-    <section class="hero">
-      <p class="eyebrow">Freelance payments with escrow, explainable AI and a human in the loop</p>
-      <h1>Get paid for every milestone, and know why if a payment is held.</h1>
-      <p class="hero-sub">Trustlance locks each milestone payment in a smart contract. When work is submitted, an AI model checks the wallet that will receive the money and explains its score in plain words. Normal payments go through at once. A risky one waits for a human arbiter, for seven days at most.</p>
-      <div class="row">
-        <a class="btn" href="#/login">Get started</a>
-        <button class="secondary" id="howBtn">See how it works</button>
+    <section class="hero2">
+      <div class="hero2-text">
+        <p class="eyebrow">Escrow · explainable AI · a human in the loop</p>
+        <h1>Hire freelancers with your money protected at every milestone.</h1>
+        <p class="hero-sub">Browse portfolios, buy a fixed package or post a job. Every payment waits in escrow until the work is delivered, and if anything looks risky, a person checks it before money moves.</p>
+        <div class="row">
+          <a class="btn big" href="#/freelancers">Browse freelancers</a>
+          <a class="btn big ghost" href="#/login">Join as a freelancer</a>
+        </div>
+        <div class="trust-row">
+          <span>✓ Money held in escrow</span><span>✓ Every AI decision explained</span><span>✓ Holds end after 7 days</span>
+        </div>
+      </div>
+      <div class="hero2-card" aria-hidden="true">
+        <div class="mini-head">${avatar("Omar Freelancer")} <div><strong>Media buying starter</strong><span>3 campaigns · 0.9 ETH</span></div></div>
+        <div class="mini-step done"><span>1</span> Case 1 funded and delivered <b>Released</b></div>
+        <div class="mini-step live"><span>2</span> Case 2 submitted · risk 0.05 low <b>Ready</b></div>
+        <div class="mini-step"><span>3</span> Case 3 waiting for funding</div>
       </div>
     </section>
 
     <section class="facts">
-      <div><strong>0.92</strong><span>ROC-AUC of the risk model on 8,731 real labelled wallets</span></div>
-      <div><strong>7 days</strong><span>longest the AI can hold a payment; it can never move money</span></div>
-      <div><strong>100%</strong><span>of flags come with a written reason the freelancer can appeal</span></div>
+      <div><strong>0.92</strong><span>accuracy score (ROC-AUC) of our fraud model on 8,731 real wallets</span></div>
+      <div><strong>7 days</strong><span>longest the AI can hold a payment. It can never move money.</span></div>
+      <div><strong>100%</strong><span>of holds come with a written reason the freelancer can appeal</span></div>
     </section>
+
+    ${packages.length ? `<section>
+      <div class="section-head"><h2 class="section-title">Popular packages</h2><a href="#/freelancers">See all freelancers →</a></div>
+      <p class="sub">Fixed scope, fixed price. Each case is a milestone paid from escrow when it is delivered.</p>
+      <div class="pkg-grid">${packages.slice(0, 3).map((p) => packageCard(p, { showFreelancer: true })).join("")}</div>
+    </section>` : ""}
+
+    ${freelancers.length ? `<section>
+      <div class="section-head"><h2 class="section-title">Freelancers with a portfolio</h2><a href="#/freelancers">Browse all →</a></div>
+      <div class="fl-grid">${freelancers.slice(0, 3).map(freelancerCard).join("")}</div>
+    </section>` : ""}
 
     <section id="how">
       <h2 class="section-title">How it works</h2>
       <div class="grid steps-grid">
-        <div class="card step-card"><span class="step-n">1</span><h3>The client funds a milestone</h3><p>The agreed amount is locked in a smart contract made for the job. Neither side, and not the platform, can take it out alone.</p></div>
-        <div class="card step-card"><span class="step-n">2</span><h3>The freelancer submits the work</h3><p>Our risk engine scores the payout wallet from 0 to 1 and names the three facts that moved the score most.</p></div>
-        <div class="card step-card"><span class="step-n">3</span><h3>Paid now, or reviewed by a person</h3><p>Low risk: the client approves and the money is released at once. High risk: the payment is held, the freelancer can appeal, and an arbiter decides.</p></div>
+        <div class="card step-card"><span class="step-n">1</span><h3>Pick a freelancer</h3><p>Check their portfolio and results, then buy one of their packages or post your own job.</p></div>
+        <div class="card step-card"><span class="step-n">2</span><h3>Fund each milestone</h3><p>The amount is locked in escrow for that job. Neither side, and not the platform, can take it out alone.</p></div>
+        <div class="card step-card"><span class="step-n">3</span><h3>Approve and pay</h3><p>When work is delivered, our AI checks the payout. Normal payments are released at once. A risky one waits for a human arbiter, for 7 days at most.</p></div>
       </div>
     </section>
 
     <section>
       <h2 class="section-title">Built for everyone in the job</h2>
       <div class="grid">
-        <div class="card"><h3>Freelancers</h3><p>The money for each milestone is locked before you start. If a payment is ever held, you see exactly why and can appeal on the record.</p></div>
-        <div class="card"><h3>Clients</h3><p>You pay into escrow, approve when you are happy, and can dispute work that was not delivered. Payouts to wallets that look like fraud are stopped for review.</p></div>
-        <div class="card"><h3>Arbiters</h3><p>One queue with the score, the reason, the appeal and the deliverable side by side. The contract lets you release or refund, nothing else.</p></div>
+        <div class="card role-card"><h3>Freelancers</h3><p>Show your work in a public portfolio, sell fixed packages, and know the money is there before you start.</p></div>
+        <div class="card role-card"><h3>Clients</h3><p>Pay into escrow, approve when you are happy, or dispute work that was not delivered.</p></div>
+        <div class="card role-card"><h3>Arbiters</h3><p>Every held or disputed payment in one queue, with the AI's reason and the freelancer's appeal side by side.</p></div>
       </div>
     </section>
 
-    <section class="cta card">
+    <section class="cta-band">
       <div>
         <h2>Try it with the demo accounts</h2>
-        <p class="muted">Log in as a client, a freelancer or an arbiter and follow one payment from start to finish.</p>
+        <p>Log in as a client, a freelancer or an arbiter and follow one payment from start to finish.</p>
       </div>
-      <a class="btn" href="#/login">Open the demo</a>
+      <a class="btn big light" href="#/login">Open the demo</a>
     </section>
 
-    <p class="footer-note">Trustlance is a graduation project at ESLSCA University, running on a test blockchain with test ETH. No real money is involved.</p>`;
-  $("#howBtn").onclick = () => $("#how").scrollIntoView({ behavior: "smooth" });
+    <p class="footer-note">Trustlance is a graduation project at ESLSCA University. It runs on a test network with test ETH: no real money is involved.</p>`;
+}
+
+function freelancerCard(f) {
+  return `<a class="fl-card" href="#/u/${f.id}">
+    <div class="fl-top">${avatar(f.full_name, "lg")}<div><h3>${esc(f.full_name)}</h3>
+      <span class="muted">${f.portfolio_count} portfolio ${f.portfolio_count === 1 ? "item" : "items"} · ${f.completed_jobs} jobs completed</span></div></div>
+    <p class="fl-bio">${esc(f.bio || "No bio yet.")}</p>
+    <div class="tags">${skillTags(f.skills)}</div>
+    <div class="fl-foot">${f.from_eth ? `Packages from <strong>${esc(f.from_eth)} ETH</strong>` : `<span class="muted">No packages yet</span>`}<span>View profile →</span></div>
+  </a>`;
+}
+
+// Directory of freelancers: open to everyone.
+async function renderFreelancers(view) {
+  const list = await api("GET", "/public/freelancers");
+  view.innerHTML = `
+    <h1>Freelancers</h1><p class="sub">Open a profile to see their portfolio and packages. Payments for every package go through escrow.</p>
+    <div class="fl-grid">${list.map(freelancerCard).join("") || `<div class="card muted">No freelancers yet.</div>`}</div>`;
+}
+
+// A freelancer's public profile: portfolio and packages. Clients can buy a package here.
+async function renderPublicProfile(view, id) {
+  const f = await api("GET", `/public/freelancers/${id}`);
+  const canBuy = !state.user || state.user.role === "client";
+  const own = state.user && state.user.id === f.id;
+  view.innerHTML = `
+    <p><a href="#/freelancers">← All freelancers</a></p>
+    <section class="profile-head card">
+      ${avatar(f.full_name, "xl")}
+      <div class="profile-main">
+        <h1>${esc(f.full_name)}</h1>
+        <p>${esc(f.bio || "No bio yet.")}</p>
+        <div class="tags">${skillTags(f.skills)}</div>
+        <p class="muted">${f.completed_jobs} jobs completed on Trustlance · member since ${esc(String(f.member_since).slice(0, 10))}</p>
+      </div>
+      ${own ? `<a class="btn" href="#/portfolio">Edit portfolio</a>` : ""}
+    </section>
+
+    <h2 class="section-title">Packages</h2>
+    ${f.packages.length ? `<div class="pkg-grid">${f.packages.map((p) => packageCard(p, { canBuy: canBuy && !own })).join("")}</div>`
+      : `<div class="card muted">No packages offered right now.</div>`}
+    ${!state.user && f.packages.length ? `<p class="muted">Log in as a client to buy a package.</p>` : ""}
+
+    <h2 class="section-title" style="margin-top:28px">Portfolio</h2>
+    ${f.portfolio.length ? `<div class="port-grid">${f.portfolio.map((p) => `
+      <div class="port-item">
+        <h3>${esc(p.title)}</h3>
+        ${p.result ? `<p class="port-result">${esc(p.result)}</p>` : ""}
+        <p>${esc(p.description)}</p>
+        ${p.link ? `<p class="muted">${webLink(p.link)}</p>` : ""}
+      </div>`).join("")}</div>` : `<div class="card muted">No portfolio items yet.</div>`}`;
+  wireBuyButtons(view);
+}
+
+// A freelancer manages their own portfolio items and packages.
+async function renderMyPortfolio(view) {
+  const [items, packages] = await Promise.all([api("GET", "/me/portfolio"), api("GET", "/me/packages")]);
+  view.innerHTML = `
+    <div class="row spread"><div><h1>Portfolio & packages</h1><p class="sub">This is what clients see on your public profile.</p></div>
+      <a class="btn" href="#/u/${state.user.id}">View my public profile</a></div>
+    <div class="grid">
+      <div class="card">
+        <h2>Add a package</h2>
+        <p class="muted">A fixed offer a client can buy directly. Each case becomes a milestone paid from escrow.</p>
+        <form id="pkgForm">
+          <label>Title</label><input name="title" required maxlength="120" placeholder="Media buying starter: 3 campaigns" />
+          <label>What is included</label><textarea name="description" maxlength="2000"></textarea>
+          <div class="row"><div style="flex:1"><label>Number of cases</label><input name="cases" type="number" min="1" max="12" value="3" required /></div>
+            <div style="flex:1"><label>Total price (ETH)</label><input name="price_eth" required placeholder="0.9" /></div>
+            <div style="flex:1"><label>Delivery (days)</label><input name="delivery_days" type="number" min="1" max="365" value="30" /></div></div>
+          <div class="row" style="margin-top:14px"><button>Add package</button></div>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Add portfolio work</h2>
+        <form id="portForm">
+          <label>Title</label><input name="title" required maxlength="120" placeholder="Ramadan campaign for a fashion store" />
+          <label>Result (one line)</label><input name="result" maxlength="120" placeholder="ROAS 4.2x on 60,000 EGP spend" />
+          <label>Description</label><textarea name="description" maxlength="2000"></textarea>
+          <label>Link (optional)</label><input name="link" placeholder="https://" />
+          <div class="row" style="margin-top:14px"><button>Add to portfolio</button></div>
+        </form>
+      </div>
+    </div>
+    <h2 class="section-title">Your packages</h2>
+    <div class="card">${packages.length ? `<table><tr><th>Package</th><th>Cases</th><th>Price</th><th>Status</th><th></th></tr>
+      ${packages.map((p) => `<tr><td>${esc(p.title)}</td><td>${p.cases}</td><td>${esc(p.price_eth)} ETH</td><td>${pill(p.active ? "offered" : "hidden", p.active ? "released" : "")}</td>
+        <td><button class="secondary" data-toggle="${p.id}" data-active="${p.active ? 0 : 1}">${p.active ? "Hide" : "Offer again"}</button></td></tr>`).join("")}</table>`
+      : `<p class="muted">No packages yet.</p>`}</div>
+    <h2 class="section-title">Your portfolio</h2>
+    ${items.length ? `<div class="port-grid">${items.map((p) => `
+      <div class="port-item"><h3>${esc(p.title)}</h3>${p.result ? `<p class="port-result">${esc(p.result)}</p>` : ""}<p>${esc(p.description)}</p>
+        ${p.link ? `<p class="muted">${webLink(p.link)}</p>` : ""}
+        <button class="secondary small" data-del="${p.id}">Remove</button></div>`).join("")}</div>`
+      : `<div class="card muted">No portfolio items yet.</div>`}`;
+  $("#pkgForm").onsubmit = (e) => { e.preventDefault(); act(() => api("POST", "/me/packages", formData(e.target)), "Package added"); };
+  $("#portForm").onsubmit = (e) => { e.preventDefault(); act(() => api("POST", "/me/portfolio", formData(e.target)), "Added to your portfolio"); };
+  view.querySelectorAll("[data-toggle]").forEach((b) => {
+    b.onclick = () => act(() => api("PUT", `/me/packages/${b.dataset.toggle}`, { active: b.dataset.active === "1" }), "Package updated");
+  });
+  view.querySelectorAll("[data-del]").forEach((b) => {
+    b.onclick = () => { if (confirm("Remove this item from your portfolio?")) act(() => api("DELETE", `/me/portfolio/${b.dataset.del}`), "Removed"); };
+  });
 }
 
 function renderLogin(view) {
@@ -205,7 +387,7 @@ function renderLogin(view) {
 async function renderClientHome(view) {
   const jobs = await api("GET", "/jobs?mine=1");
   view.innerHTML = `
-    <h1>My jobs</h1><p class="sub">Post a job, accept a proposal, then pay milestone by milestone.</p>
+    <h1>My jobs</h1><p class="sub">Post a job and accept a proposal, or <a href="#/freelancers">buy a package from a freelancer</a>. Then pay milestone by milestone.</p>
     <div class="grid">
       <div class="card">
         <h2>Post a job</h2>
@@ -313,6 +495,7 @@ async function renderJob(view, id) {
     <p><a href="#/">← Back</a></p>
     <div class="card">
       <div class="row spread"><h1>${esc(job.title)}</h1>${pill(job.status)}</div>
+      ${job.package_id ? `<p class="muted">Bought as a package from <a href="#/u/${job.freelancer_id}">the freelancer's profile</a>. Fund each case to start it.</p>` : ""}
       <p>${esc(job.description)}</p>
       <p class="muted">Budget ${esc(job.budget_eth)} ETH${job.escrow_address ? ` · Escrow contract <span class="mono">${esc(job.escrow_address)}</span>` : ""}</p>
     </div>

@@ -17,6 +17,8 @@ function createApp({ db, chain, risk, jwtSecret }) {
 
   app.get("/api/health", (req, res) => res.json({ ok: true }));
   app.use("/api", require("./routes/auth")(deps));
+  // Before the jobs router, whose login check covers every path it sees: the public pages need no login.
+  app.use("/api", require("./routes/market")({ ...deps, milestoneHelpers: milestones }));
   app.use("/api", require("./routes/jobs")(deps));
   app.use("/api", milestones.router);
   app.use("/api", require("./routes/arbiter")({ ...deps, milestoneHelpers: milestones }));

@@ -40,4 +40,21 @@ function isWebUrl(value) {
   }
 }
 
-module.exports = { wrap, publicUser, cleanEth, toWei, cleanText, isWebUrl };
+// Wei (BigInt) back to a decimal ETH string without trailing zeros, e.g. 300000000000000000n -> "0.3".
+function fromWei(wei) {
+  const whole = wei / 10n ** 18n;
+  const frac = (wei % 10n ** 18n).toString().padStart(18, "0").replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : `${whole}`;
+}
+
+// The platform assigns an arbiter to each new job: the one with the fewest jobs in progress.
+function pickArbiter(db) {
+  return db
+    .prepare(
+      `SELECT u.* FROM users u LEFT JOIN jobs j ON j.arbiter_id = u.id AND j.status = 'in_progress'
+       WHERE u.role = 'arbiter' GROUP BY u.id ORDER BY COUNT(j.id), u.id LIMIT 1`
+    )
+    .get();
+}
+
+module.exports = { wrap, publicUser, cleanEth, toWei, fromWei, cleanText, isWebUrl, pickArbiter };
