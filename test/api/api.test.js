@@ -231,9 +231,65 @@ describe("Trustlance API", function () {
     });
   });
 
-  describe("stubs", function () {
-    it("ratings return 501 until FR17 is built", async function () {
-      expect((await call("POST", "/api/jobs/1/reviews", { rating: 5 }, t.client)).status).to.equal(501);
+  describe("reviews, revisions, messages and search (FR17, FR20)", function () {
+    it("reviews: only after completion, once per side, shown on the public profile", async function () {
+      const { job, m, fl } = await fundedMilestone(t, "freelancer@demo.com", "1");
+      expect((await call("POST", `/api/jobs/${job.id}/reviews`, { rating: 5 }, t.client)).status).to.equal(409); // not completed
+      await call("POST", `/api/milestones/${m.id}/submit`, { deliverable_url: "https://example.com/w" }, fl);
+      await call("POST", `/api/milestones/${m.id}/approve`, null, t.client); // whole budget paid -> completed
+      expect((await call("POST", `/api/jobs/${job.id}/reviews`, { rating: 6 }, t.client)).status).to.equal(400);
+      const r = await call("POST", `/api/jobs/${job.id}/reviews`, { rating: 4, comment: "Good work" }, t.client);
+      expect(r.status).to.equal(201);
+      expect((await call("POST", `/api/jobs/${job.id}/reviews`, { rating: 5 }, t.client)).status).to.equal(409); // once
+      expect((await call("POST", `/api/jobs/${job.id}/reviews`, { rating: 5 }, fl)).status).to.equal(201); // other side
+      const profile = (await call("GET", `/api/public/freelancers/${r.body.reviewee_id}`)).body;
+      expect(profile.reviews).to.be.greaterThan(0);
+      expect(profile.review_list[0].reviewer).to.equal("Mona"); // first name only on public pages
+    });
+
+    it("request changes sends work back; the freelancer resubmits", async function () {
+      const { m, fl } = await fundedMilestone(t, "freelancer@demo.com", "0.2");
+      await call("POST", `/api/milestones/${m.id}/submit`, { deliverable_url: "https://example.com/v1" }, fl);
+      expect((await call("POST", `/api/milestones/${m.id}/request-changes`, { note: "" }, t.client)).status).to.equal(400);
+      expect((await call("POST", `/api/milestones/${m.id}/request-changes`, { note: "x" }, fl)).status).to.equal(403);
+      const back = await call("POST", `/api/milestones/${m.id}/request-changes`, { note: "Use the brand colours" }, t.client);
+      expect(back.body.status).to.equal("funded");
+      const again = await call("POST", `/api/milestones/${m.id}/submit`, { deliverable_url: "https://example.com/v2" }, fl);
+      expect(again.body.milestone.status).to.equal("submitted");
+      const events = (await call("GET", `/api/milestones/${m.id}`, null, t.client)).body.history.map((h) => h.event);
+      expect(events.filter((e) => e === "submitted").length).to.equal(2);
+      expect(events).to.include("changes_requested");
+      // A flagged payment belongs to the arbiter, so it cannot be sent back.
+      const risky = await fundedMilestone(t, "risky@demo.com", "0.1");
+      await call("POST", `/api/milestones/${risky.m.id}/submit`, { deliverable_url: "https://example.com/r" }, risky.fl);
+      expect((await call("POST", `/api/milestones/${risky.m.id}/request-changes`, { note: "x" }, t.client)).status).to.equal(409);
+    });
+
+    it("messages: client and freelancer chat, the arbiter only reads, outsiders see nothing", async function () {
+      const { job, fl } = await fundedMilestone(t, "freelancer@demo.com", "0.1");
+      expect((await call("POST", `/api/jobs/${job.id}/messages`, { body: "Hi, any questions?" }, t.client)).status).to.equal(201);
+      const mine = (await call("GET", "/api/jobs?mine=1", null, fl)).body.find((j) => j.id === job.id);
+      expect(mine.unread_messages).to.equal(1);
+      const read = await call("GET", `/api/jobs/${job.id}/messages`, null, fl);
+      expect(read.body.map((m) => m.body)).to.deep.equal(["Hi, any questions?"]);
+      expect((await call("GET", "/api/jobs?mine=1", null, fl)).body.find((j) => j.id === job.id).unread_messages).to.equal(0);
+      expect((await call("POST", `/api/jobs/${job.id}/messages`, { body: "All clear" }, fl)).status).to.equal(201);
+      expect((await call("GET", `/api/jobs/${job.id}/messages`, null, t.arbiter)).body.length).to.equal(2);
+      expect((await call("POST", `/api/jobs/${job.id}/messages`, { body: "x" }, t.arbiter)).status).to.equal(403);
+      expect((await call("GET", `/api/jobs/${job.id}/messages`, null, await login("risky@demo.com"))).status).to.equal(404);
+      expect((await call("POST", `/api/jobs/${job.id}/messages`, { body: "   " }, t.client)).status).to.equal(400);
+    });
+
+    it("search: freelancers by words, price and rating; jobs by words", async function () {
+      const names = async (qs) => (await call("GET", `/api/public/freelancers?${qs}`)).body.map((f) => f.full_name);
+      expect(await names("q=media%20buying")).to.include("Omar Freelancer");
+      expect(await names("q=media%20buying")).to.not.include("Karim NewWallet");
+      expect(await names("max_price=0.5")).to.include("Karim NewWallet");
+      expect(await names("q=nothing-matches-this")).to.deep.equal([]);
+      const fl = await login("freelancer@demo.com");
+      const jobs = (await call("GET", "/api/jobs?q=landing%20page", null, fl)).body;
+      expect(jobs.length).to.be.greaterThan(0);
+      expect(jobs.every((j) => `${j.title} ${j.description}`.toLowerCase().includes("landing page"))).to.equal(true);
     });
   });
 });

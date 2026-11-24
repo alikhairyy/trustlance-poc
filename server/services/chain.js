@@ -85,6 +85,7 @@ function makeChain(ethers) {
   const flag = (address, index, reason) => send(address, "oracle", "flagRisk", [index, reason]);
   const approve = (address, client, index) => send(address, client, "approveMilestone", [index]);
   const dispute = (address, client, index) => send(address, client, "disputeMilestone", [index]);
+  const requestChanges = (address, client, index) => send(address, client, "requestChanges", [index]);
   const appeal = (address, freelancer, index, note) => send(address, freelancer, "appealFlag", [index, note]);
   const arbiterRelease = (address, arbiter, index) => send(address, arbiter, "arbiterRelease", [index]);
   const arbiterRefund = (address, arbiter, index) => send(address, arbiter, "arbiterRefund", [index]);
@@ -121,6 +122,7 @@ function makeChain(ethers) {
     flag,
     approve,
     dispute,
+    requestChanges,
     appeal,
     arbiterRelease,
     arbiterRefund,

@@ -31,30 +31,64 @@ module.exports = function marketRoutes({ db, chain, auth, notifications, milesto
   const activePackages = (freelancerId) =>
     db.prepare("SELECT * FROM packages WHERE freelancer_id = ? AND active = 1 ORDER BY id").all(freelancerId);
 
+  // Average stars and number of reviews a freelancer has received.
+  const ratingOf = (freelancerId) => {
+    const r = db.prepare("SELECT AVG(rating) AS avg, COUNT(*) AS n FROM reviews WHERE reviewee_id = ?").get(freelancerId);
+    return { rating: r.n ? Math.round(r.avg * 10) / 10 : null, reviews: r.n };
+  };
+
+  // Directory with search: ?q= (name, skills, bio, package titles), ?max_price= (cheapest package in ETH),
+  // ?min_rating=, ?sort= rating | price | jobs (default: rating, then completed jobs).
   router.get("/public/freelancers", (req, res) => {
     const rows = db.prepare("SELECT * FROM users WHERE role = 'freelancer' ORDER BY id").all();
-    res.json(
-      rows.map((u) => ({
+    let list = rows.map((u) => {
+      const pkgs = activePackages(u.id);
+      const prices = pkgs.map((p) => toWei(p.price_eth));
+      return {
         ...publicProfile(u),
+        ...ratingOf(u.id),
         portfolio_count: db.prepare("SELECT COUNT(*) AS n FROM portfolio_items WHERE freelancer_id = ?").get(u.id).n,
-        packages: activePackages(u.id).length,
+        packages: pkgs.length,
         completed_jobs: completedJobs(u.id),
-        from_eth: (() => {
-          const prices = activePackages(u.id).map((p) => toWei(p.price_eth));
-          return prices.length ? fromWei(prices.reduce((a, b) => (b < a ? b : a))) : null;
-        })(),
-      }))
+        from_eth: prices.length ? fromWei(prices.reduce((a, b) => (b < a ? b : a))) : null,
+        _search: `${u.full_name} ${u.skills} ${u.bio} ${pkgs.map((p) => p.title).join(" ")}`.toLowerCase(),
+      };
+    });
+    const q = String(req.query.q || "").trim().toLowerCase();
+    if (q) list = list.filter((f) => q.split(/\s+/).every((word) => f._search.includes(word)));
+    const maxPrice = cleanEth(req.query.max_price);
+    if (maxPrice) list = list.filter((f) => f.from_eth && toWei(f.from_eth) <= toWei(maxPrice));
+    const minRating = Number(req.query.min_rating);
+    if (minRating > 0) list = list.filter((f) => f.rating !== null && f.rating >= minRating);
+    const sort = String(req.query.sort || "rating");
+    const price = (f) => (f.from_eth ? Number(f.from_eth) : Infinity);
+    list.sort(
+      sort === "price" ? (a, b) => price(a) - price(b)
+        : sort === "jobs" ? (a, b) => b.completed_jobs - a.completed_jobs
+        : (a, b) => (b.rating ?? 0) - (a.rating ?? 0) || b.completed_jobs - a.completed_jobs || b.portfolio_count - a.portfolio_count
     );
+    res.json(list.map(({ _search, ...f }) => f));
   });
 
   router.get("/public/freelancers/:id", (req, res) => {
     const u = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'freelancer'").get(req.params.id);
     if (!u) return res.status(404).json({ error: "Freelancer not found" });
+    // Reviews show the reviewer's first name only, so clients are not exposed on a public page.
+    const reviews = db
+      .prepare(
+        `SELECT r.rating, r.comment, r.created_at, u.full_name AS reviewer, j.title AS job_title
+         FROM reviews r JOIN users u ON u.id = r.reviewer_id JOIN jobs j ON j.id = r.job_id
+         WHERE r.reviewee_id = ? ORDER BY r.id DESC LIMIT 20`
+      )
+      .all(u.id)
+      .map((r) => ({ ...r, reviewer: String(r.reviewer).split(" ")[0] }));
     res.json({
       ...publicProfile(u),
+      ...ratingOf(u.id),
       completed_jobs: completedJobs(u.id),
       portfolio: db.prepare("SELECT * FROM portfolio_items WHERE freelancer_id = ? ORDER BY id DESC").all(u.id),
       packages: activePackages(u.id),
+      review_list: reviews,
     });
   });
 

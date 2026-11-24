@@ -66,6 +66,7 @@ contract MilestoneEscrow {
     event ArbiterDecided(uint256 indexed id, bool releasedToFreelancer, bool wasFlagged, bool wasAppealed);
     event MilestoneReleased(uint256 indexed id, address indexed to, uint256 amount, bool viaArbiter);
     event MilestoneDisputed(uint256 indexed id);
+    event ChangesRequested(uint256 indexed id);
     event MilestoneRefunded(uint256 indexed id, address indexed to, uint256 amount);
     event RiskOracleUpdated(address indexed newOracle);
     event Paused(address indexed by);
@@ -213,6 +214,19 @@ contract MilestoneEscrow {
         if (m.status != Status.Submitted) revert WrongStatus(m.status);
         if (m.riskFlagged && block.timestamp < m.flaggedAt + REVIEW_WINDOW) revert ReleaseHeldForReview();
         _release(id, false);
+    }
+
+    /// @notice Client asks for changes instead of approving or disputing. The work goes
+    ///         back to the freelancer (Funded) so it can be submitted again; the money
+    ///         stays locked. Not allowed once the risk oracle has flagged the milestone:
+    ///         a flagged payment is the arbiter's to settle, and sending it back would let
+    ///         a resubmission dodge the review.
+    function requestChanges(uint256 id) external onlyClient whenNotPaused validMilestone(id) {
+        Milestone storage m = milestones[id];
+        if (m.status != Status.Submitted) revert WrongStatus(m.status);
+        if (m.riskFlagged) revert ReleaseHeldForReview();
+        m.status = Status.Funded;
+        emit ChangesRequested(id);
     }
 
     /// @notice Client disputes submitted work instead of approving it.

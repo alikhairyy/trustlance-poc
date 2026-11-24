@@ -119,6 +119,23 @@ CREATE TABLE IF NOT EXISTS reviews (
   UNIQUE (job_id, reviewer_id)
 );
 
+-- FR20: messages between the client and the freelancer on a job. The job's arbiter can read them.
+CREATE TABLE IF NOT EXISTS messages (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id           INTEGER NOT NULL REFERENCES jobs(id),
+  sender_id        INTEGER NOT NULL REFERENCES users(id),
+  body             TEXT    NOT NULL,
+  created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The last message each user has seen on each job, for unread counts.
+CREATE TABLE IF NOT EXISTS message_reads (
+  job_id           INTEGER NOT NULL REFERENCES jobs(id),
+  user_id          INTEGER NOT NULL REFERENCES users(id),
+  last_seen_id     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (job_id, user_id)
+);
+
 -- FR16 (stub): in-app notifications.
 CREATE TABLE IF NOT EXISTS notifications (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,

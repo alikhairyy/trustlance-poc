@@ -22,6 +22,7 @@ module.exports = function jobRoutes({ db, chain, auth, notifications }) {
         if (role === "arbiter") {
           for (const j of rows) j.paused = j.escrow_address ? await chain.isPaused(j.escrow_address) : false;
         }
+        for (const j of rows) j.unread_messages = unreadCount(j.id, id);
       } else {
         rows = db
           .prepare(
@@ -29,6 +30,11 @@ module.exports = function jobRoutes({ db, chain, auth, notifications }) {
              WHERE j.status = 'open' ORDER BY j.id DESC`
           )
           .all();
+        // Search for freelancers on "Find work": words in the title, description or skills, and a minimum budget.
+        const q = String(req.query.q || "").trim().toLowerCase();
+        if (q) rows = rows.filter((j) => `${j.title} ${j.description} ${j.skills}`.toLowerCase().includes(q));
+        const minBudget = cleanEth(req.query.min_budget);
+        if (minBudget) rows = rows.filter((j) => toWei(j.budget_eth) >= toWei(minBudget));
       }
       res.json(rows);
     })
@@ -125,10 +131,90 @@ module.exports = function jobRoutes({ db, chain, auth, notifications }) {
     })
   );
 
-  // FR17 ratings: STUB. The reviews table exists; the rules (only after completion,
-  // one review per side, aggregate score on profile) are not implemented yet.
+  // ---- FR17: reviews ----
+  // Once a job is completed, the client and the freelancer each rate the other once (1 to 5 stars).
+
+  router.get("/jobs/:id/reviews", (req, res) => {
+    const job = getJob(req.params.id);
+    if (!job || ![job.client_id, job.freelancer_id, job.arbiter_id].includes(req.user.id)) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+    res.json(
+      db
+        .prepare(
+          `SELECT r.*, u.full_name AS reviewer_name FROM reviews r JOIN users u ON u.id = r.reviewer_id
+           WHERE r.job_id = ? ORDER BY r.id`
+        )
+        .all(job.id)
+    );
+  });
+
   router.post("/jobs/:id/reviews", (req, res) => {
-    res.status(501).json({ error: "Ratings are not implemented yet (FR17)" });
+    const job = getJob(req.params.id);
+    const me = req.user.id;
+    if (!job || (job.client_id !== me && job.freelancer_id !== me)) return res.status(404).json({ error: "Job not found" });
+    if (job.status !== "completed") return res.status(409).json({ error: "You can review once the job is completed" });
+    const rating = Number(req.body && req.body.rating);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json({ error: "rating must be a whole number from 1 to 5" });
+    const comment = String((req.body && req.body.comment) || "").trim();
+    if (comment.length > 1000) return res.status(400).json({ error: "The comment is limited to 1000 characters" });
+    if (db.prepare("SELECT 1 FROM reviews WHERE job_id = ? AND reviewer_id = ?").get(job.id, me)) {
+      return res.status(409).json({ error: "You already reviewed this job" });
+    }
+    const reviewee = me === job.client_id ? job.freelancer_id : job.client_id;
+    const info = db
+      .prepare("INSERT INTO reviews (job_id, reviewer_id, reviewee_id, rating, comment) VALUES (?, ?, ?, ?, ?)")
+      .run(job.id, me, reviewee, rating, comment);
+    notifications.notify(reviewee, `You received a ${rating}-star review for "${job.title}"`);
+    res.status(201).json(db.prepare("SELECT * FROM reviews WHERE id = ?").get(info.lastInsertRowid));
+  });
+
+  // ---- FR20: messages ----
+  // The client and the freelancer of a job can write; the arbiter can read (useful in a dispute).
+
+  function messageAccess(job, userId) {
+    if (!job || !job.freelancer_id) return null;
+    if (userId === job.client_id || userId === job.freelancer_id) return "write";
+    if (userId === job.arbiter_id) return "read";
+    return null;
+  }
+
+  function unreadCount(jobId, userId) {
+    const seen = db.prepare("SELECT last_seen_id FROM message_reads WHERE job_id = ? AND user_id = ?").get(jobId, userId);
+    return db
+      .prepare("SELECT COUNT(*) AS n FROM messages WHERE job_id = ? AND sender_id != ? AND id > ?")
+      .get(jobId, userId, seen ? seen.last_seen_id : 0).n;
+  }
+
+  router.get("/jobs/:id/messages", (req, res) => {
+    const job = getJob(req.params.id);
+    if (!messageAccess(job, req.user.id)) return res.status(404).json({ error: "Job not found" });
+    const rows = db
+      .prepare(
+        `SELECT m.id, m.sender_id, m.body, m.created_at, u.full_name AS sender_name, u.role AS sender_role
+         FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.job_id = ? ORDER BY m.id`
+      )
+      .all(job.id);
+    // Reading the thread marks it as seen.
+    const last = rows.length ? rows[rows.length - 1].id : 0;
+    db.prepare(
+      `INSERT INTO message_reads (job_id, user_id, last_seen_id) VALUES (?, ?, ?)
+       ON CONFLICT (job_id, user_id) DO UPDATE SET last_seen_id = excluded.last_seen_id`
+    ).run(job.id, req.user.id, last);
+    res.json(rows);
+  });
+
+  router.post("/jobs/:id/messages", (req, res) => {
+    const job = getJob(req.params.id);
+    const access = messageAccess(job, req.user.id);
+    if (!access) return res.status(404).json({ error: "Job not found" });
+    if (access !== "write") return res.status(403).json({ error: "The arbiter can read this conversation but not write in it" });
+    const body = cleanText(req.body && req.body.body, 2000);
+    if (!body) return res.status(400).json({ error: "Write a message (max 2000 characters)" });
+    const info = db.prepare("INSERT INTO messages (job_id, sender_id, body) VALUES (?, ?, ?)").run(job.id, req.user.id, body);
+    const other = req.user.id === job.client_id ? job.freelancer_id : job.client_id;
+    notifications.notify(other, `New message on "${job.title}"`);
+    res.status(201).json(db.prepare("SELECT * FROM messages WHERE id = ?").get(info.lastInsertRowid));
   });
 
   return router;

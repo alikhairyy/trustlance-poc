@@ -95,6 +95,19 @@ describe("MilestoneEscrow", function () {
     });
   });
 
+  describe("revisions", function () {
+    it("lets the client request changes, then the freelancer resubmits; not once flagged", async function () {
+      await escrow.connect(client).fundMilestone(0, { value: AMOUNT });
+      await escrow.connect(freelancer).submitWork(0);
+      await expect(escrow.connect(freelancer).requestChanges(0)).to.be.revertedWithCustomError(escrow, "NotClient");
+      await expect(escrow.connect(client).requestChanges(0)).to.emit(escrow, "ChangesRequested").withArgs(0);
+      expect((await escrow.getMilestone(0)).status).to.equal(1n); // back to Funded, money still locked
+      await escrow.connect(freelancer).submitWork(0);
+      await escrow.connect(riskOracle).flagRisk(0, "high risk");
+      await expect(escrow.connect(client).requestChanges(0)).to.be.revertedWithCustomError(escrow, "ReleaseHeldForReview");
+    });
+  });
+
   describe("manual dispute path", function () {
     it("lets the client dispute instead of approving, then the arbiter decides", async function () {
       await escrow.connect(client).fundMilestone(0, { value: AMOUNT });

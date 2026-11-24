@@ -274,6 +274,26 @@ module.exports = function milestoneRoutes({ db, chain, risk, auth, notifications
     })
   );
 
+  // The client sends submitted work back with a note; the freelancer fixes it and submits again
+  // (which runs the risk check again). The money stays locked in escrow the whole time.
+  router.post(
+    "/milestones/:id/request-changes",
+    wrap(async (req, res) => {
+      const ctx = load(req, res, "client");
+      if (!ctx) return;
+      const note = cleanText(req.body && req.body.note, 1000);
+      if (!note) return res.status(400).json({ error: "Say what should change (max 1000 characters)" });
+      try {
+        const { txHash } = await chain.requestChanges(ctx.job.escrow_address, user(req.user.id), ctx.m.chain_index);
+        logEvent(ctx.m.id, req.user.id, "changes_requested", note, txHash);
+        notifications.notify(ctx.job.freelancer_id, `The client asked for changes on "${ctx.m.title}": ${note}`);
+        res.json(await sync(ctx.m, ctx.job));
+      } catch (err) {
+        chainError(res, err);
+      }
+    })
+  );
+
   router.post(
     "/milestones/:id/appeal",
     wrap(async (req, res) => {

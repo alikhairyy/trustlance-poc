@@ -129,6 +129,11 @@ function avatar(name, size = "") {
   return `<span class="avatar ${size}" style="background:hsl(${hue} 55% 42%)">${esc(initials)}</span>`;
 }
 
+const unreadBadge = (j) => (j.unread_messages ? `<span class="badge">${j.unread_messages} new ${j.unread_messages === 1 ? "message" : "messages"}</span>` : "");
+const starLine = (rating, count) => (count
+  ? `<span class="stars">★</span> <strong>${Number(rating).toFixed(1)}</strong> <span class="muted">(${count} ${count === 1 ? "review" : "reviews"})</span>`
+  : `<span class="muted">No reviews yet</span>`);
+
 const skillTags = (skills) => String(skills || "").split(",").map((s) => s.trim()).filter(Boolean)
   .map((s) => `<span class="tag">${esc(s)}</span>`).join("");
 
@@ -241,19 +246,40 @@ async function renderLanding(view) {
 function freelancerCard(f) {
   return `<a class="fl-card" href="#/u/${f.id}">
     <div class="fl-top">${avatar(f.full_name, "lg")}<div><h3>${esc(f.full_name)}</h3>
-      <span class="muted">${f.portfolio_count} portfolio ${f.portfolio_count === 1 ? "item" : "items"} · ${f.completed_jobs} jobs completed</span></div></div>
+      <div class="fl-rating">${starLine(f.rating, f.reviews)}</div>
+      <span class="muted">${f.portfolio_count} portfolio ${f.portfolio_count === 1 ? "item" : "items"} · ${f.completed_jobs} ${f.completed_jobs === 1 ? "job" : "jobs"} completed</span></div></div>
     <p class="fl-bio">${esc(f.bio || "No bio yet.")}</p>
     <div class="tags">${skillTags(f.skills)}</div>
     <div class="fl-foot">${f.from_eth ? `Packages from <strong>${esc(f.from_eth)} ETH</strong>` : `<span class="muted">No packages yet</span>`}<span>View profile →</span></div>
   </a>`;
 }
 
-// Directory of freelancers: open to everyone.
+// Directory of freelancers: open to everyone, with search, filters and sorting.
+const freelancerSearch = { q: "", max_price: "", min_rating: "", sort: "rating" };
+
 async function renderFreelancers(view) {
-  const list = await api("GET", "/public/freelancers");
+  const s = freelancerSearch;
   view.innerHTML = `
     <h1>Freelancers</h1><p class="sub">Open a profile to see their portfolio and packages. Payments for every package go through escrow.</p>
-    <div class="fl-grid">${list.map(freelancerCard).join("") || `<div class="card muted">No freelancers yet.</div>`}</div>`;
+    <form id="flSearch" class="search-bar card">
+      <input name="q" placeholder="Search by name, skill or service, e.g. media buying" value="${esc(s.q)}" />
+      <select name="max_price"><option value="">Any price</option>${["0.5", "1", "2", "5"].map((p) => `<option value="${p}" ${s.max_price === p ? "selected" : ""}>Packages up to ${p} ETH</option>`).join("")}</select>
+      <select name="min_rating"><option value="">Any rating</option>${["4.5", "4", "3"].map((r) => `<option value="${r}" ${s.min_rating === r ? "selected" : ""}>${r}★ and up</option>`).join("")}</select>
+      <select name="sort">${[["rating", "Best rated"], ["jobs", "Most jobs"], ["price", "Lowest price"]].map(([v, l]) => `<option value="${v}" ${s.sort === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <button>Search</button>
+    </form>
+    <div id="flResults"><p class="muted">Loading…</p></div>`;
+  const show = async () => {
+    const params = new URLSearchParams(Object.entries(freelancerSearch).filter(([, v]) => v));
+    const list = await api("GET", `/public/freelancers?${params}`);
+    $("#flResults").innerHTML = list.length
+      ? `<p class="muted">${list.length} ${list.length === 1 ? "freelancer" : "freelancers"}</p><div class="fl-grid">${list.map(freelancerCard).join("")}</div>`
+      : `<div class="card muted">No freelancers match. Try fewer words or a wider filter.</div>`;
+  };
+  const form = $("#flSearch");
+  form.onsubmit = (e) => { e.preventDefault(); Object.assign(freelancerSearch, formData(form)); show().catch((err) => toast(err.message, true)); };
+  form.querySelectorAll("select").forEach((sel) => (sel.onchange = () => form.requestSubmit()));
+  await show();
 }
 
 // A freelancer's public profile: portfolio and packages. Clients can buy a package here.
@@ -269,7 +295,8 @@ async function renderPublicProfile(view, id) {
         <h1>${esc(f.full_name)}</h1>
         <p>${esc(f.bio || "No bio yet.")}</p>
         <div class="tags">${skillTags(f.skills)}</div>
-        <p class="muted">${f.completed_jobs} jobs completed on Trustlance · member since ${esc(String(f.member_since).slice(0, 10))}</p>
+        <p class="fl-rating">${starLine(f.rating, f.reviews)}</p>
+        <p class="muted">${f.completed_jobs} ${f.completed_jobs === 1 ? "job" : "jobs"} completed on Trustlance · member since ${esc(String(f.member_since).slice(0, 10))}</p>
       </div>
       ${own ? `<a class="btn" href="#/portfolio">Edit portfolio</a>` : ""}
     </section>
@@ -286,7 +313,14 @@ async function renderPublicProfile(view, id) {
         ${p.result ? `<p class="port-result">${esc(p.result)}</p>` : ""}
         <p>${esc(p.description)}</p>
         ${p.link ? `<p class="muted">${webLink(p.link)}</p>` : ""}
-      </div>`).join("")}</div>` : `<div class="card muted">No portfolio items yet.</div>`}`;
+      </div>`).join("")}</div>` : `<div class="card muted">No portfolio items yet.</div>`}
+
+    <h2 class="section-title" style="margin-top:28px">Reviews</h2>
+    ${f.review_list.length ? `<div class="card">${f.review_list.map((r) => `<div class="review">
+        <span class="stars">${"★".repeat(r.rating)}${"☆".repeat(5 - r.rating)}</span> <strong>${esc(r.reviewer)}</strong>
+        <span class="muted">· ${esc(r.job_title)} · ${esc(String(r.created_at).slice(0, 10))}</span>
+        ${r.comment ? `<p>${esc(r.comment)}</p>` : ""}</div>`).join("")}</div>`
+      : `<div class="card muted">No reviews yet. Reviews appear after a completed job.</div>`}`;
   wireBuyButtons(view);
 }
 
@@ -410,7 +444,7 @@ async function renderClientHome(view) {
       <div class="card">
         <h2>Your jobs</h2>
         ${jobs.length ? `<table><tr><th>Job</th><th>Budget</th><th>Status</th></tr>
-          ${jobs.map((j) => `<tr><td><a href="#/job/${j.id}">${esc(j.title)}</a></td><td>${esc(j.budget_eth)} ETH</td><td>${pill(j.status)}</td></tr>`).join("")}
+          ${jobs.map((j) => `<tr><td><a href="#/job/${j.id}">${esc(j.title)}</a> ${unreadBadge(j)}</td><td>${esc(j.budget_eth)} ETH</td><td>${pill(j.status)}</td></tr>`).join("")}
         </table>` : `<p class="muted">No jobs yet.</p>`}
       </div>
     </div>
@@ -422,10 +456,19 @@ async function renderClientHome(view) {
   $("#jobForm").onsubmit = (e) => { e.preventDefault(); act(() => api("POST", "/jobs", formData(e.target)), "Job posted"); };
 }
 
+const jobSearch = { q: "", min_budget: "" };
+
 async function renderFindWork(view) {
-  const jobs = await api("GET", "/jobs");
+  const params = new URLSearchParams(Object.entries(jobSearch).filter(([, v]) => v));
+  const jobs = await api("GET", `/jobs?${params}`);
   view.innerHTML = `
     <h1>Find work</h1><p class="sub">Open jobs. Payment for each milestone is locked in escrow before you start.</p>
+    <form id="jobSearch" class="search-bar card">
+      <input name="q" placeholder="Search jobs by title, description or skill" value="${esc(jobSearch.q)}" />
+      <select name="min_budget"><option value="">Any budget</option>${["0.5", "1", "2"].map((b) => `<option value="${b}" ${jobSearch.min_budget === b ? "selected" : ""}>${b} ETH or more</option>`).join("")}</select>
+      <button>Search</button>
+    </form>
+    ${jobSearch.q || jobSearch.min_budget ? `<p class="muted">${jobs.length} matching ${jobs.length === 1 ? "job" : "jobs"}</p>` : ""}
     ${jobs.map((j) => `
       <div class="card">
         <div class="row spread"><h2>${esc(j.title)}</h2><strong>${esc(j.budget_eth)} ETH</strong></div>
@@ -436,7 +479,10 @@ async function renderFindWork(view) {
           <label>Your price (ETH)</label><input name="price_eth" required />
           <div class="row" style="margin-top:12px"><button>Send proposal</button></div>
         </form>
-      </div>`).join("") || `<div class="card muted">No open jobs right now.</div>`}`;
+      </div>`).join("") || `<div class="card muted">${jobSearch.q || jobSearch.min_budget ? "No jobs match your search." : "No open jobs right now."}</div>`}`;
+  const sf = $("#jobSearch");
+  sf.onsubmit = (e) => { e.preventDefault(); Object.assign(jobSearch, formData(sf)); render(); };
+  sf.querySelector("select").onchange = () => sf.requestSubmit();
   view.querySelectorAll("form.proposal").forEach((f) => {
     f.onsubmit = (e) => { e.preventDefault(); act(() => api("POST", `/jobs/${f.dataset.job}/proposals`, formData(f)), "Proposal sent"); };
   });
@@ -446,7 +492,7 @@ async function renderMyJobs(view) {
   const jobs = await api("GET", "/jobs?mine=1");
   view.innerHTML = `<h1>My jobs</h1><p class="sub">Jobs you were hired for.</p>
     <div class="card">${jobs.length ? `<table><tr><th>Job</th><th>Budget</th><th>Status</th></tr>
-      ${jobs.map((j) => `<tr><td><a href="#/job/${j.id}">${esc(j.title)}</a></td><td>${esc(j.budget_eth)} ETH</td><td>${pill(j.status)}</td></tr>`).join("")}</table>`
+      ${jobs.map((j) => `<tr><td><a href="#/job/${j.id}">${esc(j.title)}</a> ${unreadBadge(j)}</td><td>${esc(j.budget_eth)} ETH</td><td>${pill(j.status)}</td></tr>`).join("")}</table>`
       : `<p class="muted">No accepted proposals yet.</p>`}</div>`;
 }
 
@@ -470,12 +516,61 @@ function budgetLeft(job) {
   return frac ? `${whole}.${frac}` : `${whole}`;
 }
 
+// The job chat: loads the messages, sends new ones, and checks for replies every 4 seconds while the
+// job page is open. Only the chat box is redrawn, so nothing typed elsewhere on the page is lost.
+function startChat(jobId) {
+  clearInterval(state.chatTimer);
+  const route = `#/job/${jobId}`;
+  let lastId = -1;
+  const load = async () => {
+    const list = $("#chatList");
+    if (!list || location.hash !== route) { clearInterval(state.chatTimer); return; }
+    let msgs;
+    try { msgs = await api("GET", `/jobs/${jobId}/messages`); } catch { return; }
+    const newest = msgs.length ? msgs[msgs.length - 1].id : 0;
+    if (newest === lastId) return;
+    lastId = newest;
+    list.innerHTML = msgs.length
+      ? msgs.map((m) => `<div class="msg ${m.sender_id === state.user.id ? "mine" : ""}">
+          <div class="msg-meta">${esc(m.sender_name)} · ${esc(new Date(m.created_at.replace(" ", "T") + "Z").toLocaleString())}</div>
+          <div class="msg-body">${esc(m.body)}</div></div>`).join("")
+      : `<p class="muted">No messages yet. Say hello and agree on the details.</p>`;
+    list.scrollTop = list.scrollHeight;
+  };
+  load();
+  state.chatTimer = setInterval(load, 4000);
+  const form = $("#chatForm");
+  if (form) form.onsubmit = async (e) => {
+    e.preventDefault();
+    const input = form.querySelector("input");
+    const body = input.value.trim();
+    if (!body) return;
+    input.disabled = true;
+    try {
+      await api("POST", `/jobs/${jobId}/messages`, { body });
+      input.value = "";
+      await load();
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      input.disabled = false;
+      input.focus();
+    }
+  };
+}
+
 async function renderJob(view, id) {
   const job = await api("GET", `/jobs/${id}`);
   const role = state.user.role;
   const isClient = role === "client" && job.client_id === state.user.id;
   const proposals = isClient && job.status === "open" ? await api("GET", `/jobs/${id}/proposals`) : [];
   const details = await Promise.all(job.milestones.map((m) => api("GET", `/milestones/${m.id}`)));
+  const me = state.user.id;
+  const isParty = me === job.client_id || me === job.freelancer_id;
+  const hasChat = Boolean(job.freelancer_id) && (isParty || me === job.arbiter_id);
+  const reviews = job.status === "completed" && (isParty || me === job.arbiter_id) ? await api("GET", `/jobs/${id}/reviews`) : [];
+  const canReview = job.status === "completed" && isParty && !reviews.some((r) => r.reviewer_id === me);
+  const stars = (n) => "★".repeat(n) + "☆".repeat(5 - n);
 
   const milestoneCard = (m, d) => {
     const buttons = [];
@@ -485,6 +580,9 @@ async function renderJob(view, id) {
     }
     if (isClient && m.status === "submitted") {
       buttons.push(`<button data-a="approve" data-id="${m.id}">Approve and release</button>`);
+      if (!m.risk_flagged) {
+        buttons.push(`<button class="secondary" data-a="changes" data-id="${m.id}">Request changes</button>`);
+      }
       buttons.push(`<button class="secondary" data-a="dispute" data-id="${m.id}">Dispute</button>`);
     }
     if (role === "freelancer" && m.status === "funded") {
@@ -493,8 +591,12 @@ async function renderJob(view, id) {
     if (role === "freelancer" && m.risk_flagged && !m.appealed && ["funded", "submitted"].includes(m.status)) {
       buttons.push(`<input placeholder="Why the flag is wrong" id="note-${m.id}" style="max-width:320px" /><button class="secondary" data-a="appeal" data-id="${m.id}">Appeal flag</button>`);
     }
+    // The latest change request, shown while the work is back with the freelancer.
+    const lastChange = [...d.history].reverse().find((h) => h.event === "changes_requested");
+    const revisions = d.history.filter((h) => h.event === "changes_requested").length;
     return `<div class="card">
-      <div class="row spread"><h2>${esc(m.title)}</h2><div>${esc(m.amount_eth)} ETH ${pill(m.status)} ${m.risk_flagged ? pill("flagged") : ""} ${m.appealed ? pill("appealed") : ""}</div></div>
+      <div class="row spread"><h2>${esc(m.title)}</h2><div>${esc(m.amount_eth)} ETH ${pill(m.status)} ${m.risk_flagged ? pill("flagged") : ""} ${m.appealed ? pill("appealed") : ""} ${revisions ? pill(`${revisions} ${revisions === 1 ? "revision" : "revisions"}`, "medium") : ""}</div></div>
+      ${lastChange && m.status === "funded" ? `<div class="reason warn"><strong>Changes requested:</strong> ${esc(lastChange.detail)}</div>` : ""}
       ${m.deliverable_url ? `<p class="muted">Deliverable: ${webLink(m.deliverable_url)}</p>` : ""}
       ${riskBlock(m, d)}
       <div class="row">${buttons.join("")}</div>
@@ -522,7 +624,32 @@ async function renderJob(view, id) {
       <input name="amount_eth" placeholder="Amount (ETH)" required style="max-width:160px" /><button>Add</button></form>
       ${job.milestones.length && job.milestones.every((m) => ["released", "refunded", "cancelled"].includes(m.status))
         ? `<div class="row" style="margin-top:12px"><button class="secondary" id="closeJob">Close job</button>
-           <span class="muted">All milestones are settled. Close the job if the work is finished.</span></div>` : ""}</div>` : ""}`;
+           <span class="muted">All milestones are settled. Close the job if the work is finished.</span></div>` : ""}</div>` : ""}
+    ${job.status === "completed" && (reviews.length || canReview) ? `<div class="card">
+      <h2>Reviews</h2>
+      ${reviews.map((r) => `<div class="review"><span class="stars">${stars(r.rating)}</span> <strong>${esc(r.reviewer_name)}</strong>
+        ${r.comment ? `<p>${esc(r.comment)}</p>` : ""}</div>`).join("") || `<p class="muted">No reviews yet.</p>`}
+      ${canReview ? `<form id="reviewForm" class="review-form">
+        <label>Your rating of the ${me === job.client_id ? "freelancer" : "client"}</label>
+        <div class="star-pick">${[5, 4, 3, 2, 1].map((n) => `<input type="radio" name="rating" id="r${n}" value="${n}" ${n === 5 ? "checked" : ""}/><label for="r${n}" title="${n} stars">★</label>`).join("")}</div>
+        <label>Comment (optional)</label><textarea name="comment" maxlength="1000"></textarea>
+        <div class="row" style="margin-top:12px"><button>Post review</button></div>
+      </form>` : ""}
+    </div>` : ""}
+    ${hasChat ? `<div class="card" id="chat">
+      <h2>Messages</h2>
+      ${!isParty ? `<p class="muted">You can read this conversation as the job's arbiter.</p>` : ""}
+      <div class="chat-list" id="chatList"><p class="muted">Loading…</p></div>
+      ${isParty ? `<form id="chatForm" class="chat-form"><input name="body" placeholder="Write a message" maxlength="2000" autocomplete="off" required /><button>Send</button></form>` : ""}
+    </div>` : ""}`;
+
+  const reviewForm = $("#reviewForm");
+  if (reviewForm) reviewForm.onsubmit = (e) => {
+    e.preventDefault();
+    const d = formData(reviewForm);
+    act(() => api("POST", `/jobs/${id}/reviews`, { rating: Number(d.rating), comment: d.comment }), "Review posted");
+  };
+  if (hasChat) startChat(id);
 
   view.querySelectorAll("[data-accept]").forEach((b) => {
     b.onclick = () => act(() => api("POST", `/proposals/${b.dataset.accept}/accept`), "Proposal accepted. Escrow contract deployed.");
@@ -542,6 +669,11 @@ async function renderJob(view, id) {
       if (a === "cancel") return act(() => api("POST", `/milestones/${mid}/cancel`), "Milestone cancelled");
       if (a === "approve") return act(() => api("POST", `/milestones/${mid}/approve`), "Payment released");
       if (a === "dispute") return act(() => api("POST", `/milestones/${mid}/dispute`, { reason: "Disputed by client" }), "Sent to the arbiter");
+      if (a === "changes") {
+        const note = prompt("What should the freelancer change?");
+        if (!note || !note.trim()) { b.disabled = false; return; }
+        return act(() => api("POST", `/milestones/${mid}/request-changes`, { note }), "Sent back to the freelancer with your note");
+      }
       if (a === "appeal") return act(() => api("POST", `/milestones/${mid}/appeal`, { note: $(`#note-${mid}`).value }), "Appeal recorded on-chain");
       if (a === "submit") {
         toast("Submitting. The risk engine is scoring your payout wallet…");
